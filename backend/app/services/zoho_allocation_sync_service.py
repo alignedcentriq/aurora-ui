@@ -112,6 +112,9 @@ def sync_now() -> int:
             db.bulk_save_objects(batch)
             db.commit()
 
+        # Re-apply manual overrides to ensure they persist over truncation
+        reapply_manual_allocations(db)
+
         log.info("[zoho_allocation_sync] synced %d rows from %s", len(rows), settings.ZOHO_ALLOCATION_VIEW)
         return len(rows)
     except Exception as e:  # noqa: BLE001
@@ -122,4 +125,54 @@ def sync_now() -> int:
         db.close()
 
 
-__all__ = ["sync_now"]
+def reapply_manual_allocations(db) -> None:
+    """Read all rows from manual_employee_allocations and apply them to employee_allocations."""
+    from app.models import EmployeeAllocation, ManualEmployeeAllocation
+
+    # Fetch all manual allocations
+    manuals = db.query(ManualEmployeeAllocation).all()
+    if not manuals:
+        return
+
+    for m in manuals:
+        # Check if we have an existing row in employee_allocations
+        query = db.query(EmployeeAllocation).filter(
+            EmployeeAllocation.project_name == m.project_name,
+            EmployeeAllocation.allocation_date == m.allocation_date
+        )
+        if m.employee_id:
+            query = query.filter(EmployeeAllocation.employee_id == m.employee_id)
+        else:
+            query = query.filter(EmployeeAllocation.employee_name == m.employee_name)
+        
+        existing = query.first()
+
+        if m.is_deleted:
+            # Delete if exists
+            if existing:
+                db.delete(existing)
+        else:
+            # Upsert
+            if not existing:
+                existing = EmployeeAllocation(
+                    employee_id=m.employee_id,
+                    employee_name=m.employee_name,
+                    project_name=m.project_name,
+                    allocation_date=m.allocation_date,
+                )
+                db.add(existing)
+            
+            # Update fields
+            existing.project_lead = m.project_lead
+            existing.delivery_manager = m.delivery_manager
+            existing.efforts_percent = m.efforts_percent
+            existing.billability_percent = m.billability_percent
+            existing.project_status = m.project_status
+            existing.client_master = m.client_master
+            existing.billing = m.billing
+            existing.status = m.status
+    
+    db.commit()
+
+
+__all__ = ["sync_now", "reapply_manual_allocations"]

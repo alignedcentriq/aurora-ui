@@ -112,8 +112,15 @@ def _callback_url(provider: str) -> str:
 
 # -- Microsoft OAuth2 ---------------------------------------------------------
 
-def microsoft_auth_url(user_email: str) -> str:
-    """Build the Microsoft OAuth2 authorization URL."""
+def microsoft_auth_url(user_email: str, prompt: str = "select_account") -> str:
+    """Build the Microsoft OAuth2 authorization URL.
+
+    prompt="none" is used for the silent auto-connect fired right after SSO login
+    (see /api/integrations/connect/microsoft?silent=1): the user already has an
+    active Azure AD session from MSAL login, so Azure approves with no UI as long
+    as the app's scopes are already consented. If not, it just fails silently and
+    the user can still connect manually from Settings.
+    """
     tenant = settings.MICROSOFT_OAUTH_TENANT_ID or "common"
     state = _create_signed_state(user_email)
     params = {
@@ -123,7 +130,7 @@ def microsoft_auth_url(user_email: str) -> str:
         "response_mode": "query",
         "scope": settings.MICROSOFT_OAUTH_SCOPES,
         "state": state,
-        "prompt": "select_account",
+        "prompt": prompt,
     }
     return f"{MICROSOFT_AUTHORITY}/{tenant}/oauth2/v2.0/authorize?{urlencode(params)}"
 

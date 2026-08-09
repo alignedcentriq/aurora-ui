@@ -151,6 +151,54 @@ def fetch_leave_history(employee_code: str, limit: int = 20) -> list[dict]:
     return rows[:limit]
 
 
+def _numeric_id_map() -> dict[str, str]:
+    """All employee codes keyed by numeric Zoho record id — batched reverse lookup for
+    fetch_all_leave_history (avoids one directory round-trip per employee)."""
+    engine = _get_engine()
+    if engine is None:
+        return {}
+    view = (settings.ZOHO_VIEW or "vb_employees").strip()
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(f'SELECT employee_id, "EmployeeId" FROM {view}'))
+            return {str(r[0]): r[1] for r in result if r[0] is not None and r[1]}
+    except Exception:
+        return {}
+
+
+def fetch_all_leave_history(limit_per_employee: int = 50) -> dict[str, list[dict]]:
+    """Every employee's leave requests in one pass, keyed by employee code (e.g.
+    "AASPL-1741"), newest first — same row shape as fetch_leave_history. Used by the HR
+    leave-records view instead of calling fetch_leave_history per employee, which would
+    re-scan the whole details view once per person."""
+    view = (settings.ZOHO_LEAVE_DETAILS_VIEW or "people.vt_leave_details").strip()
+    type_names = {t["id"]: t["name"] for t in fetch_leave_types()}
+    numeric_to_code = _numeric_id_map()
+
+    by_code: dict[str, list[dict]] = {}
+    for row in _fetch_rows(view):
+        code = numeric_to_code.get(_g(row, "employee id"))
+        if not code:
+            continue
+        from_dt = row.get("from")
+        by_code.setdefault(code, []).append({
+            "type": type_names.get(_g(row, "leave type"), _g(row, "leave type")),
+            "from": from_dt.date().isoformat() if isinstance(from_dt, datetime.datetime) else str(from_dt or ""),
+            "to": (row.get("to").date().isoformat() if isinstance(row.get("to"), datetime.datetime) else str(row.get("to") or "")),
+            "days": _to_float(row.get("leave taken")),
+            "status": _g(row, "approval status"),
+            "reason": _g(row, "reason for leave"),
+            "_sort": from_dt if isinstance(from_dt, datetime.datetime) else datetime.datetime.min,
+        })
+
+    for code, rows in by_code.items():
+        rows.sort(key=lambda r: r["_sort"], reverse=True)
+        for r in rows:
+            r.pop("_sort", None)
+        by_code[code] = rows[:limit_per_employee]
+    return by_code
+
+
 def fetch_holidays(year: int | None = None, location_name: str | None = None) -> list[dict]:
     """
     Company holidays for a given year (default: current year), optionally filtered by
@@ -185,5 +233,6 @@ __all__ = [
     "fetch_leave_types",
     "fetch_leave_balances",
     "fetch_leave_history",
+    "fetch_all_leave_history",
     "fetch_holidays",
 ]

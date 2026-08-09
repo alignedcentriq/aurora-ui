@@ -161,6 +161,13 @@ def require_pmo(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     return user
 
 
+def require_strict_pmo(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """Allows PMO role only (strict requirement)."""
+    if (user.role or "").strip().lower() != "pmo":
+        raise HTTPException(status_code=403, detail="Strict PMO access required.")
+    return user
+
+
 def require_functional_manager(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     """Allows functional managers + super admin. Restricted to onboarding/VDI/PMO features."""
     if user.role not in {"functional manager", "super admin"}:

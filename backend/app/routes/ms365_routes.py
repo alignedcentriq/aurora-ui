@@ -7,6 +7,7 @@ Auth: user must have a connected Microsoft account (OAuth2 delegated token).
 
 from typing import Optional
 import asyncio
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
@@ -115,6 +116,48 @@ async def my_room_bookings(
     result = await fetch_my_room_bookings(token, days=days)
     if not result.get("success"):
         raise HTTPException(status_code=502, detail=result.get("error", "Failed to fetch bookings"))
+    return result
+
+
+@router.get("/my-meetings")
+async def my_meetings(
+    days: int = 1,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """List the user's calendar events (all, not just room bookings) from now
+    through the next `days` days — used by the home page meetings widget."""
+    token = await _require_token(user)
+    from app.services.ms365_service import fetch_calendar_view
+    now = datetime.utcnow()
+    end = now + timedelta(days=days)
+    result = await fetch_calendar_view(
+        token, now.strftime("%Y-%m-%dT%H:%M:%S"), end.strftime("%Y-%m-%dT%H:%M:%S")
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=result.get("error", "Failed to fetch meetings"))
+    return result
+
+
+class TeamsMessageRequest(BaseModel):
+    email: str
+    message: str
+
+
+@router.post("/send-teams-message")
+async def send_teams_message_route(
+    body: TeamsMessageRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Send a Teams chat message to `email`, from the clicking user's own account.
+
+    Backs the birthday-wish and appreciation-congratulate buttons on the home sidebar —
+    the frontend composes the message text, this just delivers it via a 1:1 Teams chat.
+    """
+    token = await _require_token(user)
+    from app.services.ms365_service import send_direct_message
+    result = await send_direct_message(token, body.email, body.message)
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=result.get("error", "Failed to send message"))
     return result
 
 

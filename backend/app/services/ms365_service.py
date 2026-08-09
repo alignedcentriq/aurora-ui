@@ -884,6 +884,59 @@ async def create_group_chat(token: str, topic: str, member_emails: list[str]) ->
         return _error(f"Failed to create group chat: {e}")
 
 
+async def create_one_on_one_chat(token: str, other_email: str) -> dict:
+    """Create (or fetch the existing) 1:1 Teams chat between the caller and another user.
+
+    Graph returns the existing chat if the pair already has one, so this is safe even when
+    find_chat_by_participant misses it (e.g. a chat with no messages sent yet).
+    """
+    url = f"{GRAPH_BASE}/chats"
+    payload = {
+        "chatType": "oneOnOne",
+        "members": [
+            {
+                "@odata.type": "#microsoft.graph.aadUserConversationMember",
+                "roles": ["owner"],
+                "user@odata.bind": "https://graph.microsoft.com/v1.0/me",
+            },
+            {
+                "@odata.type": "#microsoft.graph.aadUserConversationMember",
+                "roles": ["owner"],
+                "user@odata.bind": f"https://graph.microsoft.com/v1.0/users/{other_email.strip()}",
+            },
+        ],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.post(url, headers=_headers(token), json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+        return {"success": True, "chat_id": data.get("id")}
+    except httpx.HTTPStatusError as e:
+        return _error(f"Chat creation error: {e.response.text[:300]}", e.response.status_code)
+    except Exception as e:
+        return _error(f"Failed to create chat: {e}")
+
+
+async def send_direct_message(token: str, recipient_email: str, message: str) -> dict:
+    """Send a Teams chat message to `recipient_email`, from the token's owner.
+
+    Reuses an existing 1:1 chat with that person if one exists, else starts one. Backs
+    both the birthday-wish and appreciation-congratulate buttons on the home sidebar —
+    the caller composes the message text, this just gets it delivered.
+    """
+    existing = await find_chat_by_participant(token, recipient_email)
+    if existing:
+        chat_id = existing["chat_id"]
+    else:
+        created = await create_one_on_one_chat(token, recipient_email)
+        if not created.get("success"):
+            return created
+        chat_id = created["chat_id"]
+
+    return await send_teams_message(token, chat_id, message)
+
+
 async def find_chat_by_participant(token: str, person: str) -> dict | None:
     """Search recent chats to find one matching a person name, email, or group chat topic."""
     url = f"{GRAPH_BASE}/me/chats"

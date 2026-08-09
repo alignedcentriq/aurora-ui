@@ -55,16 +55,9 @@ export const Route = createRootRoute({
       { rel: "stylesheet", href: appCss },
       { rel: "icon", type: "image/png", href: `${import.meta.env.BASE_URL}logo.png` },
       { rel: "apple-touch-icon", href: `${import.meta.env.BASE_URL}pwa-192.png` },
-      // Warm the cache for the splash logo and home video as early as possible,
-      // rather than waiting for their components to mount after the JS bundle loads.
+      // Warm the cache for the splash logo as early as possible, rather than
+      // waiting for its component to mount after the JS bundle loads.
       { rel: "preload", href: `${import.meta.env.BASE_URL}logo.png`, as: "image", fetchpriority: "high" },
-      {
-        rel: "preload",
-        href: `${import.meta.env.BASE_URL}videos/home-hero-poster.jpg`,
-        as: "image",
-        fetchpriority: "high",
-      },
-      { rel: "preload", href: `${import.meta.env.BASE_URL}videos/home-hero.mp4`, as: "video", type: "video/mp4" },
     ],
   }),
   errorComponent: (props) => (

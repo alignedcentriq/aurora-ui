@@ -275,7 +275,7 @@ const CONFIGS: Record<string, PortalCopilotConfig> = {
 
   "control-hub/hr-portal": {
     key: "control-hub/hr-portal",
-    label: "HR Requests",
+    label: "People Operations",
     Icon: CalendarDays,
     accent: "#16A34A",
     heading: "HR case management",

@@ -46,6 +46,7 @@ async def integration_status(user: CurrentUser = Depends(get_current_user)):
 async def connect_provider(
     provider: str,
     email: Optional[str] = Query(None),
+    silent: bool = Query(False),
 ):
     """Redirect user to provider's OAuth consent screen.
 
@@ -53,6 +54,10 @@ async def connect_provider(
     at this URL), so the SPA's x-user-email / x-user-role headers are NOT sent
     and get_current_user cannot be used here. We authenticate from the ?email=
     query param instead and validate it against ALLOWED_EMAIL_DOMAIN.
+
+    silent=1 is used for the auto-connect fired from a hidden iframe right after
+    SSO login: prompt=none instead of the account-picker UI, since the user is
+    already signed into Azure AD.
     """
     if provider not in PROVIDERS:
         raise HTTPException(400, f"Unknown provider: {provider}")
@@ -65,7 +70,7 @@ async def connect_provider(
 
     try:
         if provider == "microsoft":
-            url = microsoft_auth_url(user_email)
+            url = microsoft_auth_url(user_email, prompt="none" if silent else "select_account")
         elif provider == "zoho":
             url = zoho_auth_url(user_email)
         else:

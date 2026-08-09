@@ -15,10 +15,7 @@ const TextRoll: React.FC<{
     <motion.span
       initial="initial"
       whileHover="hovered"
-      className={cn("relative block overflow-hidden", className)}
-      style={{
-        lineHeight: 0.75,
-      }}
+      className={cn("relative block overflow-hidden leading-normal", className)}
     >
       <div>
         {children.split("").map((l, i) => {

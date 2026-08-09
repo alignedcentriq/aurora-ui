@@ -14,7 +14,6 @@ import {
   Activity,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
-import { HomeVideoBackground } from "@/components/HomeVideoBackground";
 import { BrandName } from "@/components/BrandName";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -2770,7 +2769,6 @@ export function AssistantView({
 
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
-      {!isCopilot && <HomeVideoBackground />}
       <main className="relative flex min-w-0 flex-1 flex-col">
         {/* Server busy — proactive heads-up; input stays usable (requests queue). */}
         <AnimatePresence>
@@ -2960,25 +2958,19 @@ export function AssistantView({
                   transition={{ duration: 0.6 }}
                   className="flex w-full flex-col items-center justify-center text-center max-w-5xl mx-auto relative min-h-0 py-2 sm:py-4"
                 >
-                  {/* Decorative sparkle/wireframe accents — only over the plain copilot
-                      background; the home tab's video is already the visual interest. */}
-                  {isCopilot && (
-                    <>
-                      <div className="absolute inset-0 w-full h-[300px] pointer-events-none opacity-40">
-                        <SparklesCore
-                          id="chat-sparkles"
-                          minSize={0.4}
-                          maxSize={1.0}
-                          particleDensity={60}
-                          speed={0.4}
-                          particleColor="#3B8FE8"
-                        />
-                      </div>
-                      <div className="absolute inset-0 w-full h-[300px] pointer-events-none opacity-70">
-                        <AmbientField />
-                      </div>
-                    </>
-                  )}
+                  <div className="absolute inset-0 w-full h-[300px] pointer-events-none opacity-40">
+                    <SparklesCore
+                      id="chat-sparkles"
+                      minSize={0.4}
+                      maxSize={1.0}
+                      particleDensity={60}
+                      speed={0.4}
+                      particleColor="#3B8FE8"
+                    />
+                  </div>
+                  <div className="absolute inset-0 w-full h-[300px] pointer-events-none opacity-70">
+                    <AmbientField />
+                  </div>
                   {(() => {
                     const { heading, subheading } = getGreeting(user?.name || "there");
                     return (
@@ -2995,10 +2987,7 @@ export function AssistantView({
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ duration: 0.5, delay: 0.2 }}
-                          className={cn(
-                            "text-xs sm:text-base mb-4 sm:mb-8",
-                            isCopilot ? "text-muted-foreground" : "text-white/70",
-                          )}
+                          className="text-xs sm:text-base text-muted-foreground mb-4 sm:mb-8"
                         >
                           {subheading}
                         </motion.p>
@@ -3028,13 +3017,8 @@ export function AssistantView({
                     transition={{ duration: 0.4, delay: 0.4 }}
                     className="w-full max-w-4xl mb-3 sm:mb-5"
                   >
-                    <div className={cn("try-asking-container", !isCopilot && "on-video")}>
-                      <p
-                        className={cn(
-                          "text-[10px] sm:text-[11px] font-semibold mb-2 sm:mb-3 text-center tracking-wide",
-                          isCopilot ? "text-muted-foreground" : "text-white/70",
-                        )}
-                      >
+                    <div className="try-asking-container">
+                      <p className="text-[10px] sm:text-[11px] text-muted-foreground font-semibold mb-2 sm:mb-3 text-center tracking-wide">
                         Try asking…
                       </p>
                       {activeMode && CHAT_MODES[activeMode].cards ? (
@@ -3085,16 +3069,9 @@ export function AssistantView({
                             <button
                               key={prompt}
                               onClick={() => !busy && send(prompt)}
-                              className={cn(
-                                "group flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] sm:text-[12px] font-medium shadow-sm transition-all hover:scale-[1.02]",
-                                isCopilot
-                                  ? "border border-primary/20 bg-primary/5 text-foreground hover:bg-primary/10"
-                                  : "border border-white/20 bg-white/10 text-white hover:bg-white/20",
-                              )}
+                              className="group flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-[11px] sm:text-[12px] font-medium text-foreground shadow-sm transition-all hover:bg-primary/10 hover:scale-[1.02]"
                             >
-                              <Hash
-                                className={cn("h-3 w-3", isCopilot ? "text-primary/70" : "text-white/70")}
-                              />
+                              <Hash className="h-3 w-3 text-primary/70" />
                               {prompt}
                             </button>
                           ))}
@@ -3153,7 +3130,6 @@ export function AssistantView({
                           live={t.streaming}
                           isError={t.isError}
                           sessionId={activeId ?? undefined}
-                          onVideoBg={!isCopilot}
                           originalQuery={
                             i > 0 && activeThread.turns[i - 1]?.role === "user"
                               ? activeThread.turns[i - 1].text
@@ -3178,14 +3154,7 @@ export function AssistantView({
                                 return (
                                   <>
                                     {cleaned && (
-                                      <div
-                                        className={cn(
-                                          "text-[15px] leading-relaxed prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1 prose-table:my-2 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-th:bg-muted/60 prose-th:font-semibold prose-tr:border-b prose-tr:border-border/50 prose-table:border prose-table:border-border/50 prose-table:rounded-lg prose-table:overflow-hidden prose-table:text-sm [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto",
-                                          isCopilot
-                                            ? "text-foreground/90 dark:prose-invert prose-th:text-foreground"
-                                            : "text-white/90 prose-invert prose-th:text-white",
-                                        )}
-                                      >
+                                      <div className="text-[15px] leading-relaxed text-foreground/90 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:mt-3 prose-headings:mb-1 prose-table:my-2 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-th:bg-muted/60 prose-th:font-semibold prose-th:text-foreground prose-tr:border-b prose-tr:border-border/50 prose-table:border prose-table:border-border/50 prose-table:rounded-lg prose-table:overflow-hidden prose-table:text-sm [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto">
                                         <ReactMarkdown
                                           remarkPlugins={[remarkGfm]}
                                           components={{
@@ -3593,12 +3562,7 @@ export function AssistantView({
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
-          className={cn(
-            "relative px-3 pb-3 pt-3 sm:px-8 md:pb-8 md:pt-4 shrink-0",
-            isCopilot
-              ? "border-t border-border bg-background/60 backdrop-blur-xl"
-              : "border-t border-white/10",
-          )}
+          className="relative border-t border-border bg-background/60 backdrop-blur-xl px-3 pb-2 pt-2 sm:px-8 md:pb-4 md:pt-3 shrink-0"
         >
           <div className="mx-auto w-full max-w-4xl space-y-3">
             <AnimatePresence>
@@ -3627,9 +3591,8 @@ export function AssistantView({
               suggestions={suggestions}
               onSuggestionSelect={(t) => !busy && send(t)}
               placeholders={portalContext ? getPortalCopilot(portalContext).placeholders : undefined}
-              hideAttach={isCopilot}
+              hideAttach
               hideSlash={isCopilot}
-              onVideoBg={!isCopilot}
             />
           </div>
         </motion.footer>

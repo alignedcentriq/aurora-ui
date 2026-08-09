@@ -574,14 +574,14 @@ export function MemoryBrainTab() {
 
   const stats = data.stats || {};
   return (
-    <div className="flex h-full flex-1 flex-col overflow-hidden bg-[#050b18]">
+    <div className="flex h-full flex-1 flex-col overflow-hidden bg-background">
       {/* header + search + stats */}
-      <div className="flex flex-col gap-3 border-b border-white/10 bg-[#070f22] px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 border-b border-border bg-card px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2.5">
           <Brain className="h-5 w-5 text-[#00c4bb]" />
           <div>
-            <h2 className="text-[15px] font-bold tracking-tight text-white">Memory Brain</h2>
-            <p className="text-[11px] text-slate-400">
+            <h2 className="text-[15px] font-bold tracking-tight text-foreground">Memory Brain</h2>
+            <p className="text-[11px] text-muted-foreground">
               Everything Centriq knows and has learned from chat — click a neuron to read it
               or jump to it, click a stat chip to show/hide that lobe.
             </p>
@@ -589,20 +589,20 @@ export function MemoryBrainTab() {
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search memory…"
               aria-label="Search memory"
-              className="w-48 h-auto rounded-lg border-white/10 bg-white/5 py-1.5 pl-8 pr-3 text-[12px] text-white placeholder:text-slate-500 focus-visible:border-[#00c4bb]/50 focus-visible:ring-[#00c4bb]/30"
+              className="w-48 h-auto rounded-lg border-border bg-muted/40 py-1.5 pl-8 pr-3 text-[12px] text-foreground placeholder:text-muted-foreground/70 focus-visible:border-[#00c4bb]/50 focus-visible:ring-[#00c4bb]/30"
             />
           </div>
           <Button
             onClick={load}
             variant="outline"
             size="sm"
-            className="gap-1.5 rounded-lg border-white/10 bg-white/5 text-[12px] font-medium text-slate-200 hover:bg-white/10 hover:text-white"
+            className="gap-1.5 rounded-lg border-border bg-muted/40 text-[12px] font-medium text-foreground/90 hover:bg-muted/70 hover:text-foreground"
           >
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </Button>
@@ -610,7 +610,7 @@ export function MemoryBrainTab() {
       </div>
 
       {/* stat chips — click to show/hide that lobe */}
-      <div className="flex flex-wrap gap-2 border-b border-white/5 bg-[#060d1c] px-5 py-2">
+      <div className="flex flex-wrap gap-2 border-b border-border/60 bg-muted/20 px-5 py-2">
         {[
           ["Capabilities", stats.capabilities, "capability"],
           ["Policies", stats.policies, "knowledge"],
@@ -638,12 +638,12 @@ export function MemoryBrainTab() {
                   toggleGroup(group as string);
                 }
               }}
-              className="group cursor-pointer gap-1.5 rounded-full border border-white/10 bg-white/5 text-[11px] text-slate-300 transition-all duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--tone)_45%,transparent)] hover:shadow-[0_6px_16px_-8px_color-mix(in_oklab,var(--tone)_50%,transparent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00c4bb]"
+              className="group cursor-pointer gap-1.5 rounded-full border border-border bg-muted/40 text-[11px] text-foreground/80 transition-all duration-200 hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--tone)_45%,transparent)] hover:shadow-[0_6px_16px_-8px_color-mix(in_oklab,var(--tone)_50%,transparent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00c4bb]"
               style={{ "--tone": GROUP_COLOR[group as string], opacity: hidden ? 0.35 : 1 } as React.CSSProperties}
               title={hidden ? "Hidden — click to show" : "Click to hide this lobe"}
             >
               <span className="h-2 w-2 rounded-full" style={{ background: GROUP_COLOR[group as string], boxShadow: hidden ? "none" : `0 0 6px ${GROUP_COLOR[group as string]}` }} />
-              {label} <span className="font-semibold text-white">{(val as number) ?? 0}</span>
+              {label} <span className="font-semibold text-foreground">{(val as number) ?? 0}</span>
             </Badge>
           );
         })}
@@ -670,7 +670,7 @@ export function MemoryBrainTab() {
             />
           </Canvas>
         ) : (
-          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-400">
+          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
             The 3D memory graph is disabled on this device (low power or reduced-motion) to save
             battery — search above still works.
           </div>
@@ -679,32 +679,32 @@ export function MemoryBrainTab() {
         {canRender3D && (
           <button
             onClick={() => setFeedOpen((v) => !v)}
-            className="absolute left-3 top-3 rounded-lg border border-white/10 bg-[#0a1428]/90 px-2.5 py-1.5 text-[11px] font-medium text-slate-300 backdrop-blur hover:text-white"
+            className="absolute left-3 top-3 rounded-lg border border-border bg-card/90 px-2.5 py-1.5 text-[11px] font-medium text-foreground/80 backdrop-blur hover:text-foreground"
           >
             {feedOpen ? "Hide activity ›" : "‹ Live activity"}
           </button>
         )}
         {canRender3D && feedOpen && (
-          <div className="absolute left-3 top-11 max-h-[60%] w-[250px] overflow-y-auto rounded-xl border border-white/10 bg-[#0a1428]/90 p-3 backdrop-blur">
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          <div className="absolute left-3 top-11 max-h-[60%] w-[250px] overflow-y-auto rounded-xl border border-border bg-card/90 p-3 backdrop-blur">
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
               Live activity
             </div>
             {recentEvents.length === 0 ? (
-              <p className="py-1 text-[11px] text-slate-500">No recent activity yet.</p>
+              <p className="py-1 text-[11px] text-muted-foreground/70">No recent activity yet.</p>
             ) : (
               recentEvents.map((n) => (
                 <button
                   key={n.id}
                   onClick={() => handleSelect(n)}
-                  className="flex w-full items-start gap-2 border-b border-white/5 py-1.5 text-left last:border-0"
+                  className="flex w-full items-start gap-2 border-b border-border/60 py-1.5 text-left last:border-0"
                 >
                   <span
                     className="mt-1 h-1.5 w-1.5 flex-none rounded-full"
                     style={{ background: GROUP_COLOR[n.group], boxShadow: `0 0 5px ${GROUP_COLOR[n.group]}` }}
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[11.5px] leading-tight text-slate-200">{n.label}</span>
-                    <span className="text-[10px] text-slate-500">{relTime(n.ts)}</span>
+                    <span className="block truncate text-[11.5px] leading-tight text-foreground/90">{n.label}</span>
+                    <span className="text-[10px] text-muted-foreground/70">{relTime(n.ts)}</span>
                   </span>
                 </button>
               ))
@@ -714,7 +714,7 @@ export function MemoryBrainTab() {
 
         {selected && (
           <div
-            className="absolute right-3 top-3 bottom-3 w-[320px] overflow-y-auto rounded-xl bg-[#0a1428]/95 p-4 backdrop-blur motion-safe:animate-fade-in"
+            className="absolute right-3 top-3 bottom-3 w-[320px] overflow-y-auto rounded-xl bg-card/95 p-4 backdrop-blur motion-safe:animate-fade-in"
             style={{
               border: `1px solid color-mix(in oklab, ${GROUP_COLOR[selected.group]} 35%, transparent)`,
               boxShadow: `0 0 0 1px color-mix(in oklab, ${GROUP_COLOR[selected.group]} 12%, transparent), 0 20px 60px -20px color-mix(in oklab, ${GROUP_COLOR[selected.group]} 40%, black)`,
@@ -723,28 +723,28 @@ export function MemoryBrainTab() {
             <button
               onClick={() => setSelected(null)}
               aria-label="Close detail panel"
-              className="absolute right-3 top-3 text-slate-400 hover:text-white"
+              className="absolute right-3 top-3 text-muted-foreground hover:text-foreground"
             >
               <X className="h-4 w-4" />
             </button>
             <div className="mb-2 flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full" style={{ background: GROUP_COLOR[selected.group], boxShadow: `0 0 8px ${GROUP_COLOR[selected.group]}` }} />
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {GROUP_LABEL[selected.group] || selected.type}
               </span>
             </div>
-            <h3 className="mb-1 pr-6 text-[15px] font-bold leading-snug text-white">{selected.label}</h3>
+            <h3 className="mb-1 pr-6 text-[15px] font-bold leading-snug text-foreground">{selected.label}</h3>
             {(selected.count != null || selected.ts) && (
-              <div className="mb-2 flex gap-3 text-[11px] text-slate-400">
+              <div className="mb-2 flex gap-3 text-[11px] text-muted-foreground">
                 {selected.count != null && <span>{selected.count} items</span>}
                 {selected.ts && <span>{relTime(selected.ts)}</span>}
               </div>
             )}
-            <p className="mb-3 whitespace-pre-wrap text-[12.5px] leading-relaxed text-slate-300">{selected.detail}</p>
+            <p className="mb-3 whitespace-pre-wrap text-[12.5px] leading-relaxed text-foreground/80">{selected.detail}</p>
 
             {related.length > 0 && (
               <>
-                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
                   Related
                 </div>
                 <div className="mb-1 flex flex-col gap-1">
@@ -752,13 +752,13 @@ export function MemoryBrainTab() {
                     <button
                       key={r.id}
                       onClick={() => setSelected(r)}
-                      className="flex items-center gap-2 rounded-md py-1 text-left hover:bg-white/5"
+                      className="flex items-center gap-2 rounded-md py-1 text-left hover:bg-muted/40"
                     >
                       <span
                         className="h-2 w-2 flex-none rounded-full"
                         style={{ background: GROUP_COLOR[r.group], boxShadow: `0 0 6px ${GROUP_COLOR[r.group]}` }}
                       />
-                      <span className="truncate text-[12px] text-slate-200">{r.label}</span>
+                      <span className="truncate text-[12px] text-foreground/90">{r.label}</span>
                     </button>
                   ))}
                 </div>
@@ -767,7 +767,7 @@ export function MemoryBrainTab() {
           </div>
         )}
 
-        <p className="pointer-events-none absolute bottom-3 left-4 text-[10px] text-slate-500">
+        <p className="pointer-events-none absolute bottom-3 left-4 text-[10px] text-muted-foreground/70">
           Drag to orbit · scroll to zoom · click a neuron to inspect or jump to it
         </p>
       </div>

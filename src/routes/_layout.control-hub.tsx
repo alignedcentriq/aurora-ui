@@ -247,7 +247,7 @@ const TABS: TabItem[] = [
   },
   {
     id: "hr-portal",
-    label: "HR Requests",
+    label: "People Operations",
     category: "Management Portals",
     icon: CalendarDays,
     color: "#16A34A",

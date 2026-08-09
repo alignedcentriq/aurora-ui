@@ -196,7 +196,6 @@ export function AIMessage({
   sessionId,
   originalQuery,
   isPrivate,
-  onVideoBg,
 }: {
   children: ReactNode;
   live?: boolean;
@@ -208,8 +207,6 @@ export function AIMessage({
   sessionId?: string;
   originalQuery?: string;
   isPrivate?: boolean;
-  /** Renders as dark frosted glass instead of a solid bubble — used over the home tab's video background. */
-  onVideoBg?: boolean;
 }) {
   const badge = domain ? DOMAIN_BADGE[domain] : null;
   const [feedbackState, setFeedbackState] = useState<FeedbackState>("idle");
@@ -263,13 +260,7 @@ export function AIMessage({
 
         <div className="flex-1 min-w-0 space-y-1.5">
           {/* Message bubble with domain border accent */}
-          <div
-            className={cn(
-              "chat-bubble-assistant",
-              onVideoBg && "on-video",
-              badge && `border-l-2 ${badge.borderColor}`,
-            )}
-          >
+          <div className={cn("chat-bubble-assistant", badge && `border-l-2 ${badge.borderColor}`)}>
             <div className="relative">{children}</div>
           </div>
 
@@ -291,9 +282,7 @@ export function AIMessage({
                     "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition-all",
                     copied
                       ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                      : onVideoBg
-                        ? "text-white/60 hover:bg-white/10 hover:text-white"
-                        : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                   )}
                 >
                   {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
@@ -303,19 +292,12 @@ export function AIMessage({
 
               {onFeedback && feedbackState === "idle" && !isPrivate && (
                 <>
-                  {text && (
-                    <div className={cn("w-px h-3.5 mx-0.5", onVideoBg ? "bg-white/20" : "bg-border/60")} />
-                  )}
+                  {text && <div className="w-px h-3.5 bg-border/60 mx-0.5" />}
                   <motion.button
                     whileTap={{ scale: 0.85 }}
                     onClick={handleThumbsUp}
                     title="Helpful"
-                    className={cn(
-                      "flex h-7 w-7 items-center justify-center rounded-lg transition-all",
-                      onVideoBg
-                        ? "text-white/60 hover:bg-white/10 hover:text-emerald-400"
-                        : "text-muted-foreground hover:bg-secondary hover:text-emerald-500",
-                    )}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-emerald-500 transition-all"
                   >
                     <ThumbsUp className="h-3.5 w-3.5" />
                   </motion.button>
@@ -323,12 +305,7 @@ export function AIMessage({
                     whileTap={{ scale: 0.85 }}
                     onClick={handleThumbsDown}
                     title="Not helpful"
-                    className={cn(
-                      "flex h-7 w-7 items-center justify-center rounded-lg transition-all",
-                      onVideoBg
-                        ? "text-white/60 hover:bg-white/10 hover:text-destructive"
-                        : "text-muted-foreground hover:bg-secondary hover:text-destructive",
-                    )}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-destructive transition-all"
                   >
                     <ThumbsDown className="h-3.5 w-3.5" />
                   </motion.button>
@@ -350,10 +327,7 @@ export function AIMessage({
                 <motion.span
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className={cn(
-                    "text-[11px] font-medium px-1",
-                    onVideoBg ? "text-white/60" : "text-muted-foreground",
-                  )}
+                  className="text-[11px] font-medium text-muted-foreground px-1"
                 >
                   Thanks for the feedback
                 </motion.span>

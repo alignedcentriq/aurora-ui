@@ -410,6 +410,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     fetchMockPhoto();
   }, [user?.email, user?.avatarUrl, accounts.length]);
 
+  // Auto-connect Microsoft 365 (Connected Accounts) once per tab session right
+  // after SSO login, so mail/calendar/Teams/room-booking work without the user
+  // clicking "Connect" in Settings. Runs in a hidden iframe with prompt=none —
+  // Azure AD approves silently since the user already has an active AAD session
+  // from MSAL login; if the org hasn't consented the scopes it just fails
+  // invisibly and the user can still connect manually from Settings.
+  useEffect(() => {
+    if (accounts.length === 0 || inProgress !== InteractionStatus.None) return;
+    const email = accounts[0].username;
+    const flagKey = `ms365_auto_connect_${email}`;
+    if (sessionStorage.getItem(flagKey)) return;
+    sessionStorage.setItem(flagKey, "1");
+
+    (async () => {
+      try {
+        const res = await fetchWithTimeout(
+          "/api/integrations/status",
+          { headers: { "x-user-email": email } },
+          5000,
+        );
+        if (!res.ok) return;
+        const statuses: { provider: string; connected: boolean }[] = await res.json();
+        if (statuses.find((s) => s.provider === "microsoft")?.connected) return;
+
+        const iframe = document.createElement("iframe");
+        iframe.style.display = "none";
+        iframe.src = `/api/integrations/connect/microsoft?email=${encodeURIComponent(email)}&silent=1`;
+        document.body.appendChild(iframe);
+        setTimeout(() => iframe.remove(), 8000);
+      } catch {
+        // silent — user can still connect manually from Settings
+      }
+    })();
+  }, [accounts, inProgress]);
+
   const login = async () => {
     if (isInteracting) return;
     try {

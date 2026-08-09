@@ -197,6 +197,28 @@ def _expand_query(query: str) -> tuple[str, str | None]:
     return expanded, suggestion
 
 
+# The entire corpus is authored by/for this one company, so its own name carries zero
+# discriminative signal for choosing WHICH document answers a question — but compliance /
+# letterhead-style documents repeat it many times per paragraph, which spuriously inflates
+# BM25 term-frequency and embedding overlap for any query that also contains it. A natural
+# employee phrasing like "what is leave policy in aligned automation" would otherwise rank
+# the Labor & Human Rights Policy above the actual Leave Policy purely on name repetition.
+# Covers every way employees refer to the company: the full name, "AASPL", "AA", and the
+# bare word "Aligned" alone (all company shorthand here, never a different topic).
+_COMPANY_NOISE_RE = re.compile(
+    r'\b(aligned(\s+automation(\s+services)?(\s+private|\s+pvt)?(\s+limited|\s+ltd)?\.?)?|aaspl|aa)\b',
+    re.IGNORECASE,
+)
+
+
+def _strip_company_noise(query: str) -> str:
+    """Strip literal company-name/legal-entity mentions from retrieval-scoring text
+    (embedding input, BM25 tsquery, title-bonus keywords) — see _COMPANY_NOISE_RE."""
+    stripped = re.sub(r'\s+', ' ', _COMPANY_NOISE_RE.sub(' ', query)).strip()
+    # Guard: if the query WAS just the company name, don't hand retrieval an empty string.
+    return stripped if len(stripped) >= 3 else query
+
+
 def _safe_title(title: str) -> str:
     """Sanitize a policy title for use as a safe filename."""
     return re.sub(r'[^\w\-]', '_', title)[:60]
@@ -1118,6 +1140,7 @@ class PolicyService:
         from app.models import SCHEMA
 
         query, did_you_mean = _expand_query(query)
+        query = _strip_company_noise(query)
 
         db = SessionLocal()
         try:

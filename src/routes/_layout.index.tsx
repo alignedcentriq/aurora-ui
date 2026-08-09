@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AssistantView } from "@/components/assistant/AssistantView";
+import { HomeRightRail } from "@/components/assistant/HomeRightRail";
 
 export const Route = createFileRoute("/_layout/")({
   head: () => ({
@@ -22,5 +23,12 @@ export const Route = createFileRoute("/_layout/")({
 });
 
 function Index() {
-  return <AssistantView />;
+  return (
+    <div className="flex h-full w-full overflow-hidden">
+      <div className="min-w-0 flex-1">
+        <AssistantView />
+      </div>
+      <HomeRightRail />
+    </div>
+  );
 }

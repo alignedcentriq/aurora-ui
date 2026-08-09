@@ -1384,6 +1384,24 @@ def _extract_citations(all_messages: list) -> list[dict]:
     return citations
 
 
+def _retrieval_veto_hit(all_messages: list) -> bool:
+    """True if any tool call in this turn hit the policy-search semantic veto
+    (RETRIEVAL_VETO_SENTINEL) — i.e. the retrieval layer itself found nothing relevant.
+
+    This is a structural signal (a fixed Python string the search functions emit),
+    unlike scanning the LLM's final prose for refusal phrasing: the answering model
+    can paraphrase "I couldn't find this" in ways a regex won't catch, and caching
+    that miss would poison the semantic answer cache for every later near-identical
+    query (including correctly-spelled ones) within the similarity threshold.
+    """
+    from langchain_core.messages import ToolMessage as _TMsg
+    from app.services.policy_service import RETRIEVAL_VETO_SENTINEL
+    for msg in all_messages:
+        if isinstance(msg, _TMsg) and isinstance(msg.content, str) and RETRIEVAL_VETO_SENTINEL in msg.content:
+            return True
+    return False
+
+
 def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: float) -> dict:
     """Apply the same cleanup/extraction logic as the old blocking endpoint."""
     final_message = raw_text
@@ -1579,6 +1597,7 @@ def _postprocess(raw_text: str, all_messages: list, domain: str, start_time: flo
         "interactive": interactive,
         "images": policy_images if policy_images else None,
         "citations": citations if citations else None,
+        "retrieval_veto": _retrieval_veto_hit(all_messages),
         "processing_time": f"{time.time() - start_time:.2f}s",
     }
 
@@ -2113,6 +2132,7 @@ async def chat(
                 and final_message
                 and len(final_message.strip()) >= 40
                 and not _REFUSAL_RE.search(final_message)
+                and not post.get("retrieval_veto")
             ):
                 from app.services.answer_cache_service import AnswerCacheService
                 await asyncio.to_thread(
