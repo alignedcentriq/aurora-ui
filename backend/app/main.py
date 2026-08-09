@@ -381,6 +381,13 @@ async def startup_event():
     except Exception as e:
         logging.warning("Access role seed failed (non-fatal): %s", e)
 
+    try:
+        from app.services import zoho_allocation_sync_service
+        synced = await asyncio.to_thread(zoho_allocation_sync_service.sync_now)
+        logging.info("[allocation sync] startup sync: %d rows", synced)
+    except Exception as e:
+        logging.warning("Allocation sync (startup) failed (non-fatal): %s", e)
+
     if hasattr(app_agent.checkpointer, "setup"):
         try:
             await app_agent.checkpointer.setup()
@@ -419,6 +426,21 @@ async def startup_event():
                 pass
 
     _app_background_tasks.append(asyncio.create_task(attendance_scheduler()))
+
+    # Re-sync employee_allocations from the live Zoho vb_allocation_details view so
+    # "current" allocation data stays current without a manual Excel re-import.
+    async def allocation_sync_scheduler():
+        from app.config import settings as _settings
+        from app.services import zoho_allocation_sync_service
+        interval = max(5, _settings.ZOHO_ALLOCATION_SYNC_INTERVAL_MIN) * 60
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await asyncio.to_thread(zoho_allocation_sync_service.sync_now)
+            except Exception:
+                pass
+
+    _app_background_tasks.append(asyncio.create_task(allocation_sync_scheduler()))
 
     # ── Model keep-alive heartbeat ─────────────────────────────────────────
     # Fires a 0-token ping at every heavy model tier every 10 minutes.

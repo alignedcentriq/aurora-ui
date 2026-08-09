@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
+import { AnimatedLink } from "@/components/ui/skiper-ui/skiper40";
 import { apiUrl } from "@/lib/api-base";
 import {
   Dialog,
@@ -68,6 +69,11 @@ interface DirEmployee {
   allocated_percent?: number;
   availability_percent?: number;
   available?: boolean;
+  // Present only when this person has no staffed row of their own this month but IS
+  // listed as Project Lead / Delivery Manager on others' rows — a Director/Lead is
+  // still actively managing these, so `available` is deliberately false with no
+  // free-capacity number rather than a guessed one.
+  leading_projects?: string[];
 }
 
 // Alchemy-sourced profile enrichment (skills + projects).
@@ -233,6 +239,15 @@ function EmployeeCard({
                 {emp.availability_percent != null && emp.availability_percent > 0
                   ? `${emp.availability_percent}% free`
                   : "Available"}
+              </span>
+            )}
+            {!emp.available && !!emp.leading_projects?.length && (
+              <span
+                title={`Leading/managing: ${emp.leading_projects.join(", ")}`}
+                className="inline-flex items-center gap-1 text-[9px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                Managing {emp.leading_projects.length > 1 ? `${emp.leading_projects.length} projects` : "project"}
               </span>
             )}
           </div>
@@ -555,7 +570,7 @@ interface ProjectDetailResp {
     name: string;
     efforts: number | null;
     billability: number | null;
-    done: boolean;
+    status: string;
     role?: string;
   }[];
 }
@@ -657,7 +672,7 @@ function ProjectDetailDialog({
                     meta={[
                       m.role,
                       m.billability != null ? `${m.billability}% billable` : null,
-                      m.billability != null ? (m.done ? "Completed" : "Active") : null,
+                      m.status,
                     ]
                       .filter(Boolean)
                       .join(" · ")}
@@ -727,7 +742,10 @@ function ProfileModal({
     const headers: Record<string, string> = {};
     if (user?.email) headers["x-user-email"] = user.email;
     if (user?.role) headers["x-user-role"] = user.role.toLowerCase();
-    fetch(`/api/employees/directory/${encodeURIComponent(code)}/enrichment`, { headers })
+    fetch(
+      `/api/employees/directory/${encodeURIComponent(code)}/enrichment?name=${encodeURIComponent(emp.name || "")}`,
+      { headers },
+    )
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((d) => {
         if (!cancelled)
@@ -794,12 +812,12 @@ function ProfileModal({
                   </dt>
                   <dd className="min-w-0 flex-1 font-semibold text-slate-800 dark:text-slate-200 break-words">
                     {label === "Email ID" && value ? (
-                      <a
+                      <AnimatedLink
                         href={`mailto:${value}`}
-                        className="text-[#1f86e0] dark:text-primary hover:underline"
+                        className="text-[#1f86e0] dark:text-primary"
                       >
                         {value}
-                      </a>
+                      </AnimatedLink>
                     ) : (
                       value || "—"
                     )}

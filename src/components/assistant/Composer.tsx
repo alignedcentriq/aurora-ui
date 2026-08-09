@@ -474,6 +474,17 @@ export function Composer({
 
       {/* Composer with elegant focused styling */}
       <div className="relative">
+        <AnimatePresence>
+          {isFocused && !disabled && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4 }}
+              className="pointer-events-none absolute -inset-1 -z-10 animate-spin rounded-[28px] bg-[conic-gradient(from_0deg,var(--clarity),var(--connectivity),var(--primary),var(--clarity))] blur-md [animation-duration:4s]"
+            />
+          )}
+        </AnimatePresence>
         <div
           className={cn(
             "relative flex flex-col rounded-[24px] border backdrop-blur-2xl shadow-lg transition-all p-2",

@@ -561,7 +561,7 @@ async def my_requests(
     user: CurrentUser = Depends(get_current_user),
 ):
     from app.models import (
-        Leave, ParkingSticker, FacilityComplaint, Reimbursement,
+        ParkingSticker, FacilityComplaint, Reimbursement,
         TravelRequest, TravelExpenseClaim, UdemyLicenseRequest,
         HRQuery, Grievance, Escalation, FormSubmission, FormTemplate, ITTicket
     )
@@ -585,8 +585,14 @@ async def my_requests(
                 "it_tickets": []
             }
 
-        # 1. Leaves
-        leaves = db.query(Leave).filter(Leave.employee_id == emp.id).order_by(Leave.created_at.desc()).all()
+        # 1. Leaves — always read live from the Zoho vt_leave_details view
+        #    (system-of-record); nothing kept locally.
+        zoho_leaves = []
+        try:
+            from app.services import zoho_leave_service
+            zoho_leaves = zoho_leave_service.fetch_leave_history(emp.employee_id)
+        except Exception:
+            pass  # Zoho view unavailable must never break the requests page
 
         # 2. Parking Stickers
         parking = db.query(ParkingSticker).filter(ParkingSticker.employee_id == emp.id).order_by(ParkingSticker.valid_from.desc()).all()
@@ -637,16 +643,16 @@ async def my_requests(
         return {
             "leaves": [
                 {
-                    "id": l.id,
-                    "leave_type": l.leave_type,
-                    "status": l.status,
-                    "start_date": str(l.start_date) if l.start_date else None,
-                    "end_date": str(l.end_date) if l.end_date else None,
-                    "reason": l.reason or "",
-                    "days": ((l.end_date - l.start_date).days + 1) if l.start_date and l.end_date else 1,
-                    "created_at": l.created_at.isoformat() if hasattr(l, "created_at") and l.created_at else None,
+                    "id": f"zoho-{idx}",
+                    "leave_type": z.get("type"),
+                    "status": z.get("status"),
+                    "start_date": z.get("from"),
+                    "end_date": z.get("to"),
+                    "reason": z.get("reason") or "",
+                    "days": z.get("days"),
+                    "created_at": z.get("from"),
                 }
-                for l in leaves
+                for idx, z in enumerate(zoho_leaves)
             ],
             "parking": [
                 {
@@ -842,11 +848,83 @@ def _attach_enrichment(employees: list[dict]) -> None:
         pass
 
 
+def _shape_allocation_projects(rows: list, latest: "datetime.date | None") -> list[dict]:
+    """Group one person's raw allocation rows into DirProject-shaped entries.
+
+    Each `row` needs project_name/client_master/delivery_manager/project_status/
+    allocation_date. Rows spanning several months collapse to one entry per project:
+    start_date is the first month they appear on it; end_date is the last month IF
+    they've since rolled off it (absent from the latest available snapshot) — left
+    blank while still current, matching how an open-ended Alchemy project reads.
+
+    `status` follows the same latest-month rule as the project-detail popup's team
+    list: a genuinely completed project reads "Completed" for everyone; otherwise a
+    person absent from the latest month reads "Inactive" for THEM specifically, even
+    if the project itself is still "Ongoing" for the rest of the team."""
+    from app.services.allocation_snapshot_service import _project_completed
+
+    by_project: dict[str, dict] = {}
+    for r in rows:
+        name = (r["project_name"] or "").strip()
+        if not name or name.lower() == "no allocation":
+            continue
+        key = name.lower()
+        entry = by_project.setdefault(key, {"name": name, "first": r["allocation_date"]})
+        entry["last"] = r["allocation_date"]
+        # Later rows win for the descriptive fields — the most recent month's client/
+        # manager/status is the most accurate if any of these drifted over time.
+        entry["client"] = r["client_master"] or entry.get("client", "")
+        entry["manager"] = r["delivery_manager"] or entry.get("manager", "")
+        entry["status"] = r["project_status"] or entry.get("status", "")
+
+    out = []
+    for entry in by_project.values():
+        current = bool(latest) and entry.get("last") == latest
+        raw_status = entry.get("status", "") or ""
+        if _project_completed(raw_status):
+            status = "Completed"
+        elif current:
+            status = raw_status
+        else:
+            status = "Inactive"
+        out.append({
+            "name": entry["name"],
+            "role": "",
+            "client": entry.get("client", "") or "",
+            "manager": entry.get("manager", "") or "",
+            "status": status,
+            "start_date": entry["first"].isoformat() if entry.get("first") else "",
+            "end_date": "" if current else (entry["last"].isoformat() if entry.get("last") else ""),
+            "skills_used": "",
+        })
+    return out
+
+
+def _merge_projects(existing: list[dict], additions: list[dict]) -> list[dict]:
+    """Append `additions` whose (normalized) name isn't already in `existing`, then
+    resort by recency — the shared no-duplicates rule for the profile's Projects list."""
+    if not additions:
+        return existing
+    seen = {(p.get("name") or "").strip().lower() for p in existing}
+    merged = list(existing)
+    for p in additions:
+        key = (p.get("name") or "").strip().lower()
+        if key and key not in seen:
+            merged.append(p)
+            seen.add(key)
+    merged.sort(key=lambda p: (p.get("end_date") or p.get("start_date") or ""), reverse=True)
+    return merged
+
+
 def _attach_allocations(employees: list[dict]) -> None:
     """Bundle each employee's distinct project allocations (from employee_allocations,
     keyed by employee_id == directory employee_code) so the grid can filter/search by
     project the person was actually staffed on — far broader coverage (~1.3k people)
     than the Alchemy profile `projects`, which only ~200 have.
+
+    Also merges allocation-derived entries into `projects` itself (the DirProject list
+    the profile popup renders) — same shape as the Alchemy ones, deduped by project
+    name — so a profile's Projects section shows both sources instead of only Alchemy's.
 
     Also bundles current availability from the LATEST allocation snapshot: allocated %
     (sum of efforts across real projects), free capacity, and an `available` flag
@@ -854,9 +932,9 @@ def _attach_allocations(employees: list[dict]) -> None:
     try:
         from app.models import SCHEMA
         from sqlalchemy import text
-        codes = [e.get("employee_code") for e in employees if e.get("employee_code")]
-        codes = [c for c in {(c or "").strip() for c in codes} if c]
-        if not codes:
+        codes = [c for c in {(e.get("employee_code") or "").strip() for e in employees} if c]
+        names = [n for n in {(e.get("name") or "").strip().lower() for e in employees} if n]
+        if not codes and not names:
             return
         db = SessionLocal()
         try:
@@ -886,6 +964,21 @@ def _attach_allocations(employees: list[dict]) -> None:
                 ),
                 {"codes": codes},
             ).all()
+            latest = db.execute(
+                text(f'SELECT max(allocation_date) FROM "{SCHEMA}".employee_allocations')
+            ).scalar()
+            # Raw per-row detail (id OR name match) to shape into DirProject entries below.
+            detail_rows = db.execute(
+                text(
+                    f'SELECT employee_id, lower(employee_name) AS lname, project_name, '
+                    f'client_master, delivery_manager, project_status, allocation_date '
+                    f'FROM "{SCHEMA}".employee_allocations '
+                    f"WHERE employee_id = ANY(:codes) OR lower(employee_name) = ANY(:names)"
+                ),
+                {"codes": codes, "names": names},
+            ).mappings().all()
+            from app.services import allocation_snapshot_service as snap
+            leading_map = snap.leading_projects_map(db)
         finally:
             db.close()
         by_code = {r[0]: {"projects": r[1] or [], "clients": r[2] or []} for r in rows}
@@ -898,20 +991,45 @@ def _attach_allocations(employees: list[dict]) -> None:
                 "availability_percent": round(free, 1),
                 "available": bool(r[2]) or free > 0,
             }
+        detail_by_id: dict[str, list] = {}
+        detail_by_name: dict[str, list] = {}
+        for r in detail_rows:
+            if r["employee_id"]:
+                detail_by_id.setdefault(r["employee_id"], []).append(r)
+            if r["lname"]:
+                detail_by_name.setdefault(r["lname"], []).append(r)
+
         for e in employees:
-            hit = by_code.get(e.get("employee_code"))
+            code = e.get("employee_code")
+            hit = by_code.get(code)
             if hit is not None:
                 e["allocation_projects"] = hit["projects"]
                 e["allocation_clients"] = hit["clients"]
-            av = avail_by_code.get(e.get("employee_code"))
+            av = avail_by_code.get(code)
             if av is not None:
                 e["allocated_percent"] = av["allocated_percent"]
                 e["availability_percent"] = av["availability_percent"]
                 e["available"] = av["available"]
             else:
-                e["allocated_percent"] = 0.0
-                e["availability_percent"] = 100.0
-                e["available"] = True
+                # No row staffed under their own name this month — but Project Lead /
+                # Delivery Manager is a role recorded on OTHER people's rows, so a
+                # Director/Lead with no staffed row can still be actively managing
+                # several projects. Don't report them as fully free without evidence
+                # either way; flag the involvement instead of guessing a load number.
+                led = leading_map.get((e.get("name") or "").strip().lower())
+                if led:
+                    e["leading_projects"] = led
+                    e["allocated_percent"] = 0.0
+                    e["availability_percent"] = None
+                    e["available"] = False
+                else:
+                    e["allocated_percent"] = 0.0
+                    e["availability_percent"] = 100.0
+                    e["available"] = True
+
+            person_rows = detail_by_id.get(code) or detail_by_name.get((e.get("name") or "").strip().lower())
+            if person_rows and e.get("projects") is not None:
+                e["projects"] = _merge_projects(e["projects"], _shape_allocation_projects(person_rows, latest))
     except Exception:
         pass
 
@@ -1046,14 +1164,44 @@ def employee_directory_query(req: DirectoryQueryRequest, user: CurrentUser = Dep
 
 
 @router.get("/directory/{employee_code}/enrichment")
-def directory_enrichment(employee_code: str, user: CurrentUser = Depends(get_current_user)):
-    """Skills + projects for a directory person, pulled live from Alchemy by AASPL code.
-
-    Returns {available, skills, projects}. Fail-soft: available=false when Alchemy
-    has no service token configured / is unreachable, so the profile still renders.
-    """
+def directory_enrichment(employee_code: str, name: str = "", user: CurrentUser = Depends(get_current_user)):
+    """Skills + projects for a directory person: Alchemy profile projects merged with
+    this person's allocation-derived project history (see _shape_allocation_projects),
+    deduped by project name. Returns {available, skills, projects}. `available` is true
+    if EITHER source has data, so a person with no Alchemy profile still gets a Projects
+    section from allocations alone. Fail-soft."""
+    from app.models import SCHEMA
     from app.services import alchemy_service
-    return alchemy_service.get_profile_enrichment(employee_code)
+    from sqlalchemy import text
+
+    result = alchemy_service.get_profile_enrichment(employee_code)
+
+    name = (name or "").strip()
+    code = (employee_code or "").strip()
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            text(
+                f'SELECT employee_id, project_name, client_master, delivery_manager, '
+                f'project_status, allocation_date '
+                f'FROM "{SCHEMA}".employee_allocations '
+                f"WHERE employee_id = :code OR (:name <> '' AND lower(employee_name) = lower(:name))"
+            ),
+            {"code": code, "name": name},
+        ).mappings().all()
+        latest = db.execute(
+            text(f'SELECT max(allocation_date) FROM "{SCHEMA}".employee_allocations')
+        ).scalar()
+    except Exception:
+        rows, latest = [], None
+    finally:
+        db.close()
+
+    alloc_projects = _shape_allocation_projects(rows, latest) if rows else []
+    if alloc_projects:
+        merged = _merge_projects(result.get("projects") or [], alloc_projects)
+        result = {**result, "available": True, "projects": merged}
+    return result
 
 
 @router.get("/skill-detail")
@@ -1113,25 +1261,32 @@ def employee_project_detail(name: str, user: CurrentUser = Depends(get_current_u
     """Project overview + the team that worked on it. Members come from BOTH the
     allocation records (employee_allocations) AND the Alchemy project history
     (alchemy_profile_cache.projects), merged by employee code — the two sources cover
-    different people, so neither alone is complete. Powers the click-through popup on a
+    different people, so neither alone is complete. Each member's status follows the
+    latest allocation month: absent from it → "Inactive" for them specifically (even
+    if the project is still "Ongoing" for the rest of the team), a genuinely completed
+    project reads "Completed" for everyone. Powers the click-through popup on a
     profile's project row. Fail-soft → {available: false} when nothing matches."""
     from app.models import SCHEMA
+    from app.services.allocation_snapshot_service import _project_completed
     from sqlalchemy import text
     pn = (name or "").strip()
     if not pn:
         return {"available": False, "project_name": name}
     db = SessionLocal()
     try:
+        latest = db.execute(
+            text(f'SELECT max(allocation_date) FROM "{SCHEMA}".employee_allocations')
+        ).scalar()
         alloc = db.execute(
             text(
                 f"SELECT employee_id, max(employee_name) AS name, "
                 f"max(efforts_percent) AS efforts, max(billability_percent) AS billability, "
-                f"bool_or(completion_status ILIKE 'Done') AS done "
+                f"bool_or(allocation_date = :latest) AS active "
                 f'FROM "{SCHEMA}".employee_allocations '
                 f"WHERE project_name = :pn AND employee_id IS NOT NULL "
                 f"GROUP BY employee_id"
             ),
-            {"pn": pn},
+            {"pn": pn, "latest": latest},
         ).mappings().all()
         meta = db.execute(
             text(
@@ -1170,6 +1325,7 @@ def employee_project_detail(name: str, user: CurrentUser = Depends(get_current_u
 
     # Merge by employee code; allocation data wins for billability/status, Alchemy
     # contributes role and any people allocations missed.
+    project_completed = _project_completed((meta or {}).get("project_status"))
     merged: dict[str, dict] = {}
     for m in alloc:
         merged[m["employee_id"]] = {
@@ -1177,7 +1333,9 @@ def employee_project_detail(name: str, user: CurrentUser = Depends(get_current_u
             "name": m["name"] or names.get(m["employee_id"]) or "",
             "efforts": m["efforts"],
             "billability": m["billability"],
-            "done": bool(m["done"]),
+            # Absent from the latest allocation month → inactive for THEM, even if the
+            # project itself is still ongoing for the rest of the team.
+            "status": "Completed" if project_completed else ("Active" if m["active"] else "Inactive"),
             "role": "",
         }
     for r in alch:
@@ -1185,12 +1343,14 @@ def employee_project_detail(name: str, user: CurrentUser = Depends(get_current_u
         if code in merged:
             merged[code]["role"] = r["role"] or merged[code]["role"]
         else:
+            # Alchemy-only member: no allocation row to check against the latest month,
+            # so default to Active unless the project itself is known to be completed.
             merged[code] = {
                 "employee_id": code,
                 "name": names.get(code) or "",
                 "efforts": None,
                 "billability": None,
-                "done": False,
+                "status": "Completed" if project_completed else "Active",
                 "role": r["role"] or "",
             }
     members = sorted(merged.values(), key=lambda x: (x["name"] or "").lower())

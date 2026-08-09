@@ -409,63 +409,6 @@ class PeopleService:
             db.close()
 
     @staticmethod
-    def import_allocations(file_bytes: bytes) -> dict:
-        df = pd.read_excel(io.BytesIO(file_bytes))
-        df = df.dropna(how="all")
-        if df.empty:
-            return {"imported": 0, "skipped": 0, "message": "No data rows found in file."}
-
-        db = SessionLocal()
-        imported = skipped = 0
-        try:
-            for _, row in df.iterrows():
-                emp_name = _safe(row.get("Name"))
-                project = _safe(row.get("Project Name"))
-                if not emp_name and not project:
-                    skipped += 1
-                    continue
-
-                zoho_id = _safe(row.get("Zoho Record ID"))
-                existing = None
-                if zoho_id:
-                    existing = db.query(EmployeeAllocation).filter(
-                        EmployeeAllocation.zoho_record_id == zoho_id
-                    ).first()
-
-                if not existing:
-                    existing = EmployeeAllocation(zoho_record_id=zoho_id)
-                    db.add(existing)
-
-                existing.employee_id = _safe(row.get("Employee ID")) or ""
-                existing.employee_name = emp_name or ""
-                existing.project_name = project or ""
-                existing.sub_project = _safe(row.get("Sub Project"))
-                existing.project_lead = _safe(row.get("Project Lead"))
-                existing.delivery_manager = _safe(row.get("Delivery Manager"))
-                existing.completion_status = _safe(row.get("Completion Status"))
-                existing.efforts_percent = _safe_float(row.get("Efforts %"))
-                existing.billability_percent = _safe_float(row.get("Billability %"))
-                existing.allocation_date = _safe_date(row.get("Allocation Date"))
-                existing.project_status = _safe(row.get("Project Status"))
-                existing.client_master = _safe(row.get("Client Master"))
-                existing.billing = _safe(row.get("Billing"))
-                existing.project_type = _safe(row.get("Project Type"))
-                existing.reporting_manager = _safe(row.get("Reporting Manager"))
-                existing.functional_manager = _safe(row.get("Functional Manager"))
-                existing.function = _safe(row.get("Function"))
-                existing.status = _safe(row.get("Status-Active/Inactive"))
-
-                imported += 1
-
-            db.commit()
-            return {"imported": imported, "skipped": skipped, "message": f"Imported {imported} allocation records."}
-        except Exception as e:
-            db.rollback()
-            raise RuntimeError(f"Import failed: {e}")
-        finally:
-            db.close()
-
-    @staticmethod
     def import_projects(file_bytes: bytes) -> dict:
         df = pd.read_excel(io.BytesIO(file_bytes))
         df = df.dropna(how="all")

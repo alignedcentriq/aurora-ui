@@ -1138,7 +1138,7 @@ export function AssistantView({
     if (!scrollRef.current) return;
     // An empty thread has no latest message to pin to, and its greeting lives at the
     // TOP — jumping to the bottom just hides it whenever the empty state is taller
-    // than the viewport (e.g. Master Mode's cockpit).
+    // than the viewport.
     if (activeThread.turns.length === 0) {
       scrollRef.current.scrollTop = 0;
       return;
@@ -3113,8 +3113,8 @@ export function AssistantView({
                     t.role === "user" ? (
                       <motion.div
                         key={`msg-${i}`}
-                        initial={{ opacity: 0, y: 16, scale: 0.97 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        initial={{ opacity: 0, y: 16, scale: 0.97, filter: "blur(4px)" }}
+                        animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
                         transition={{ type: "spring", stiffness: 400, damping: 30 }}
                         layout
                       >
@@ -3134,8 +3134,8 @@ export function AssistantView({
                     ) : (
                       <motion.div
                         key={`msg-${i}`}
-                        initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        initial={{ opacity: 0, y: 20, scale: 0.95, filter: "blur(4px)" }}
+                        animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
                         transition={{
                           type: "spring",
                           stiffness: 300,

@@ -31,6 +31,7 @@ import {
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CommandPalette } from "@/components/CommandPalette";
+import { TextRoll } from "@/components/ui/skiper-ui/skiper58";
 import { ProactiveNudgeFeed } from "@/components/assistant/ProactiveNudgeFeed";
 import { ActivityBell } from "@/components/assistant/ActivityBell";
 import { EmailAutomationDrawer } from "@/components/EmailAutomationDrawer";
@@ -43,9 +44,6 @@ import {
   POPULAR_CLOCK_TZS,
 } from "@/lib/settings-store";
 import { useIntroStore } from "@/lib/intro-store";
-import { useMasterModeStore } from "@/lib/master-mode-store";
-import { MasterModeTrigger } from "@/components/three/MasterModeTrigger";
-import { MasterModeOverlay } from "@/components/three/MasterModeOverlay";
 import { setChatSyncUser, hydrateChatFromServer } from "@/lib/chat-sync";
 import { useAuth } from "@/lib/auth-store";
 import { SittingBuddy } from "@/components/assistant/GreetingBot";
@@ -316,12 +314,8 @@ function LayoutComponent() {
   const removeClock = useSettings((s) => s.removeClock);
   const resetClocks = useSettings((s) => s.resetClocks);
   const openIntro = useIntroStore((s) => s.open);
-  const isMasterMode = useMasterModeStore((s) => s.isMasterMode);
-  const toggleMasterMode = useMasterModeStore((s) => s.toggle);
   // Intro tour play button is restricted to the app owner only.
   const canWatchIntro = (user?.email ?? "").toLowerCase() === "shivam.sharma@alignedautomation.com";
-  // Master Mode is an internal/experimental view — restricted to the app owner only.
-  const canUseMasterMode = (user?.email ?? "").toLowerCase() === "shivam.sharma@alignedautomation.com";
 
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
@@ -619,7 +613,7 @@ function LayoutComponent() {
                       />
                     </motion.div>
                     {!sidebarCollapsed && (
-                      <span className="transition-opacity duration-300">{item.label}</span>
+                      <TextRoll className="text-xs font-semibold normal-case">{item.label}</TextRoll>
                     )}
                   </Link>
                 );
@@ -1102,17 +1096,12 @@ function LayoutComponent() {
             </Link>
           </div>
 
-          {/* Right: Master Mode trigger + bell icons */}
+          {/* Right: bell icons */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {canUseMasterMode && location.pathname !== "/" && (
-              <MasterModeTrigger active={isMasterMode} onClick={toggleMasterMode} />
-            )}
             <ProactiveNudgeFeed triggerClassName="rounded-full border-blue-950/60 bg-white/5 hover:bg-white/10 text-white" />
             <ActivityBell triggerClassName="rounded-full border-blue-950/60 bg-white/5 hover:bg-white/10 text-white" />
           </div>
         </header>
-
-        {canUseMasterMode && location.pathname !== "/" && <MasterModeOverlay />}
 
         {/* --- MAIN WORKSPACE --- */}
         <main

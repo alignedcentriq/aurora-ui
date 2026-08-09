@@ -1962,9 +1962,22 @@ function ModelCoverflow({
                   {model}
                 </span>
                 {isCurrent && (
-                  <span className="relative text-[9px] font-bold uppercase tracking-wider text-primary">
+                  <motion.span
+                    initial={{ opacity: 0, scale: 0.5, y: 4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 20 }}
+                    className="relative text-[9px] font-bold uppercase tracking-wider text-primary"
+                  >
+                    {!missing && (
+                      <motion.span
+                        initial={{ opacity: 0.5, scale: 1 }}
+                        animate={{ opacity: 0, scale: 2.2 }}
+                        transition={{ duration: 0.6, ease: "easeOut" }}
+                        className="absolute inset-0 -z-10 rounded-full bg-primary/40"
+                      />
+                    )}
                     {missing ? "Not on server" : "Active"}
-                  </span>
+                  </motion.span>
                 )}
               </motion.button>
             );

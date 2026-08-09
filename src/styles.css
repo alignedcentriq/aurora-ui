@@ -536,6 +536,37 @@
   }
 }
 
+/* ─── Page transition (route changes) ──────────────────────────────
+   Circle-blur reveal, adapted from Skiper UI's skiper26 "circle-blur"
+   technique for document.startViewTransition(), driven here by
+   TanStack Router's defaultViewTransition (see src/router.tsx). */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-group(root) {
+    animation-duration: 0.5s;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  ::view-transition-old(root) {
+    animation: none;
+    z-index: -1;
+  }
+
+  ::view-transition-new(root) {
+    animation-name: centriq-page-reveal;
+  }
+
+  @keyframes centriq-page-reveal {
+    from {
+      clip-path: circle(0% at 50% 0%);
+      filter: blur(8px);
+    }
+    to {
+      clip-path: circle(150% at 50% 0%);
+      filter: blur(0);
+    }
+  }
+}
+
 /* ─── Utility Layer ─────────────────────────────────────────────── */
 
 @layer utilities {

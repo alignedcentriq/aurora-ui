@@ -195,7 +195,7 @@ const ROLE_DEFAULTS: Record<Role, CardId[]> = {
   Admin: ["system_health", "pending_approvals", "org_pulse", "open_tickets"],
   "Functional Manager": ["pending_approvals", "team_leave", "project_milestones", "kudos_board"],
   // Owner's home page: personal cards (leave, holiday, kudos, next meeting) rather
-  // than ops widgets — Master Mode + Control Hub already cover the admin surface.
+  // than ops widgets — Control Hub already covers the admin surface.
   "Super Admin": ["leave_balance", "holidays", "kudos_board", "up_next"],
 };
 

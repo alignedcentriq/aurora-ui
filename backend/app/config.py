@@ -435,6 +435,18 @@ class Config:
     ZOHO_LEAVE_DETAILS_VIEW  = os.getenv("ZOHO_LEAVE_DETAILS_VIEW", "people.vt_leave_details")
     ZOHO_HOLIDAY_LIST_VIEW   = os.getenv("ZOHO_HOLIDAY_LIST_VIEW", "people.vt_holiday_list")
 
+    # ── Zoho allocation DB (read-only allocation source, same server as ZOHO_DBURL) ──
+    # Same reporting Postgres server exposes a business/reporting view over the raw
+    # allocation feed: multi-value fields (project/lead/SOW) already split one-per-row
+    # and Efforts/Billability prorated across the split, employee/project/client names
+    # already resolved (vs. the raw view's numeric FK ids). `employee_allocations`
+    # (the local table every allocation feature reads — see services/allocation_snapshot_service.py)
+    # is now a periodic MIRROR of this view (see services/zoho_allocation_sync_service.py)
+    # rather than a one-off Excel import, so "current" stays current automatically.
+    ZOHO_ALLOCATION_VIEW = os.getenv("ZOHO_ALLOCATION_VIEW", "analytics.vb_allocation_details")
+    # Minutes between automatic re-syncs of employee_allocations from the view above.
+    ZOHO_ALLOCATION_SYNC_INTERVAL_MIN = int(os.getenv("ZOHO_ALLOCATION_SYNC_INTERVAL_MIN", "30"))
+
     # ── eSSL Attendance DB (read-only SQL Server source) ──────────────────────
     # A separate SQL Server database exposes a view of eSSL biometric attendance
     # punches (dbo.vbUserTimeEntryLog). When configured, attendance queries use

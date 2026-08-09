@@ -574,15 +574,24 @@ function ControlHubPage() {
                       Control Hub
                     </button>
                     <span className="text-muted-foreground/35">/</span>
-                    <span className="text-foreground font-semibold flex items-center gap-1.5 min-w-0">
-                      {activeTab && (
-                        <activeTab.icon
-                          className="h-3.5 w-3.5 shrink-0"
-                          style={{ color: activeTab.color }}
-                        />
-                      )}
-                      <span className="truncate">{activeTab?.label}</span>
-                    </span>
+                    <AnimatePresence mode="wait">
+                      <motion.span
+                        key={activeTabId}
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 6 }}
+                        transition={{ duration: 0.18, ease: "easeOut" }}
+                        className="text-foreground font-semibold flex items-center gap-1.5 min-w-0"
+                      >
+                        {activeTab && (
+                          <activeTab.icon
+                            className="h-3.5 w-3.5 shrink-0"
+                            style={{ color: activeTab.color }}
+                          />
+                        )}
+                        <span className="truncate">{activeTab?.label}</span>
+                      </motion.span>
+                    </AnimatePresence>
                   </div>
 
                   {/* Portal-contextual Email Automation trigger */}
