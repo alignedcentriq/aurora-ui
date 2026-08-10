@@ -12,6 +12,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 
 interface Feature {
   key: string;
@@ -186,11 +187,25 @@ export function AdoptionTab() {
 
       {/* Feature adoption table */}
       <Card>
-        <CardHeader className="pb-4">
-          <CardTitle>Capability Reach</CardTitle>
-          <CardDescription>
-            Sorted most-undiscovered first to highlight blind spots.
-          </CardDescription>
+        <CardHeader className="pb-4 flex flex-row items-start justify-between gap-4">
+          <div>
+            <CardTitle>Capability Reach</CardTitle>
+            <CardDescription>
+              Sorted most-undiscovered first to highlight blind spots.
+            </CardDescription>
+          </div>
+          <ExportCsvButton
+            rows={data.features.map((f) => ({
+              Capability: f.title,
+              Category: f.category,
+              "Reach (staff) %": f.adoption_pct_staff,
+              Users: f.users,
+              "Never Used": denom ? f.never_used_staff : "",
+              Requests: f.requests,
+              "Last Used": fmtDate(f.last_used),
+            }))}
+            filename="feature-adoption-capability-reach.csv"
+          />
         </CardHeader>
         <CardContent className="p-0">
           <div className="border-t border-border">
@@ -254,14 +269,26 @@ export function AdoptionTab() {
       {/* Unmapped traffic — registry blind spots */}
       {data.unmapped.length > 0 && (
         <Card className="border-dashed border-amber-200/50 dark:border-amber-900/50 bg-amber-50/10 dark:bg-amber-950/10">
-          <CardHeader className="pb-4">
-            <CardTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
-              <AlertCircle className="h-5 w-5" />
-              Unmapped Traffic
-            </CardTitle>
-            <CardDescription className="text-amber-600/80 dark:text-amber-500/80">
-              Real usage with no capability claims yet. Extend the registry to cover these domains.
-            </CardDescription>
+          <CardHeader className="pb-4 flex flex-row items-start justify-between gap-4">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
+                <AlertCircle className="h-5 w-5" />
+                Unmapped Traffic
+              </CardTitle>
+              <CardDescription className="text-amber-600/80 dark:text-amber-500/80">
+                Real usage with no capability claims yet. Extend the registry to cover these domains.
+              </CardDescription>
+            </div>
+            <ExportCsvButton
+              rows={data.unmapped.map((b) => ({
+                Domain: b.domain || "",
+                "Sub-intent": b.sub_intent,
+                Users: b.users,
+                Requests: b.requests,
+                "Last Used": fmtDate(b.last_used),
+              }))}
+              filename="feature-adoption-unmapped-traffic.csv"
+            />
           </CardHeader>
           <CardContent className="p-0">
             <div className="border-t border-amber-200/50 dark:border-amber-900/50">

@@ -41,6 +41,7 @@ import {
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 
 type Tab = "trainings" | "assignments" | "groups" | "mine";
 
@@ -2338,16 +2339,27 @@ function AssignmentsTab({ authHeaders, canManage }: { authHeaders: Record<string
         </div>
       )}
 
-      {canManage && (
-        <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <ExportCsvButton
+          rows={rows.map((a) => ({
+            Employee: a.employee_name || a.employee_email,
+            "Employee Email": a.employee_email,
+            Department: a.department || "",
+            "Assigned Course": a.training_title,
+            Status: a.status,
+            "Exam Score": a.score != null ? a.score : "",
+          }))}
+          filename="techelevate-assignments-ledger.csv"
+        />
+        {canManage && (
           <button
             onClick={() => setAssigning(true)}
             className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/25 transition-all duration-200 hover:scale-[1.02] active:scale-95 inline-flex items-center gap-2 cursor-pointer"
           >
             <Plus className="w-4 h-4" /> Assign Course
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="rounded-2xl border border-slate-200/50 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40 shadow-xs backdrop-blur-md overflow-hidden">
         <div className="overflow-x-auto">

@@ -70,6 +70,7 @@ import {
 } from "@/components/ui/dialog";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1246,6 +1247,21 @@ function HistoryDialog({
           ) : logs.length === 0 ? (
             <div className="text-sm text-muted-foreground py-10 text-center">No sends recorded yet.</div>
           ) : (
+            <>
+            <div className="flex justify-end mb-2">
+              <ExportCsvButton
+                rows={logs.map((l) => ({
+                  Sent: formatDt(l.sent_at),
+                  ...(showRuleColumn ? { Automation: l.rule_name } : {}),
+                  ...(showCreatorColumn ? { "Created By": l.created_by } : {}),
+                  "Triggered By":
+                    l.triggered_by === "manual" ? `Manual — ${l.triggered_by_email ?? "—"}` : "Scheduled",
+                  Recipients: l.recipients_json.join("; ") || (l.detail ?? ""),
+                  Status: l.status,
+                }))}
+                filename="automation-send-history.csv"
+              />
+            </div>
             <Table paginate itemsPerPage={10}>
               <TableHeader>
                 <TableRow>
@@ -1283,6 +1299,7 @@ function HistoryDialog({
                 ))}
               </TableBody>
             </Table>
+            </>
           )}
         </ScrollArea>
         <DialogFooter>

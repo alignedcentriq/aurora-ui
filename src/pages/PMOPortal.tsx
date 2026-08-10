@@ -8,15 +8,13 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
-  Calendar,
   GraduationCap,
-  TrendingUp,
-  ShoppingBag,
   UserCheck,
   BookOpen,
   Layers,
+  FolderKanban,
   AlertTriangle,
-  HelpCircle,
+  Plus,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -32,22 +30,15 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 
 const STATUS_BADGE: Record<string, string> = {
   Pending: "bg-amber-500/10 text-amber-500 border border-amber-500/20 dark:bg-amber-500/5",
   Approved: "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 dark:bg-emerald-500/5",
   Rejected: "bg-rose-500/10 text-rose-500 border border-rose-500/20 dark:bg-rose-500/5",
-};
-
-const ACTION_BADGE: Record<string, string> = {
-  BUY: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 shadow-sm shadow-rose-500/5",
-  TRAIN:
-    "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shadow-sm shadow-amber-500/5",
-  REDEPLOY:
-    "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 shadow-sm shadow-indigo-500/5",
-  STAFFABLE:
-    "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shadow-sm shadow-emerald-500/5",
 };
 
 // Generates beautiful gradients based on unique employee names
@@ -64,26 +55,21 @@ const getAvatarGradient = (name: string) => {
   return gradients[hash % gradients.length];
 };
 
-interface SkillSupplyRow {
-  skill_id: number;
-  skill_name: string;
-  demand: number;
-  coverage_count: number;
-  deployable_count: number;
-  locked_count: number;
-  deployable_names: string[];
-  rolling_off: { name: string; date: string }[];
-  action: string;
-  rationale: string;
+interface ProjectRow {
+  id: number;
+  name: string;
+  status: string;
+  completion_pct: number | null;
+  owner: string | null;
+  team_size: number | null;
 }
 
-interface SkillSupplyResult {
-  ok: boolean;
-  message?: string;
-  note?: string;
-  generated_on?: string;
-  summary?: Record<string, number>;
-  rows?: SkillSupplyRow[];
+interface ProjectDetail {
+  name: string;
+  start_date: string | null;
+  owner: string | null;
+  members: string[];
+  source: "allocation" | "manual";
 }
 
 interface UdemyRequest {
@@ -100,29 +86,28 @@ interface UdemyRequest {
 }
 
 const TABS = [
-  { key: "skill-supply", label: "Skill Supply" },
+  { key: "projects", label: "Projects" },
   { key: "bench-upskill", label: "Bench → Upskill" },
   { key: "udemy", label: "License Requests" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
 
 const TAB_SUBTITLE: Record<TabKey, string> = {
-  "skill-supply":
-    "In-demand skills we can't staff — market demand crossed with live capacity & availability.",
+  projects: "Track active engagements — create and monitor delivery status and milestones.",
   "bench-upskill":
     "Turn idle bench time into capability — each person matched to a course teaching an in-demand skill they lack.",
   udemy: "Review, approve or decline training-program license requests (Udemy, Coursera).",
 };
 
-const TAB_ICON: Record<TabKey, typeof TrendingUp> = {
-  "skill-supply": TrendingUp,
+const TAB_ICON: Record<TabKey, typeof GraduationCap> = {
+  projects: FolderKanban,
   "bench-upskill": GraduationCap,
   udemy: BookOpen,
 };
 
 export function PMOPortal() {
   const { user } = useAuth();
-  const [tab, setTab] = useState<TabKey>("skill-supply");
+  const [tab, setTab] = useState<TabKey>("projects");
 
   const authHeaders = useMemo(
     () => ({
@@ -222,8 +207,8 @@ export function PMOPortal() {
             transition={{ duration: 0.22, ease: "easeOut" }}
             className="h-full"
           >
-            {tab === "skill-supply" ? (
-              <SkillSupplyTab authHeaders={authHeaders} />
+            {tab === "projects" ? (
+              <ProjectsTab authHeaders={authHeaders} />
             ) : tab === "bench-upskill" ? (
               <BenchUpskillTab authHeaders={authHeaders} />
             ) : (
@@ -236,21 +221,41 @@ export function PMOPortal() {
   );
 }
 
-// ── Skill Supply Subtab Component ───────────────────────────────────────────
-function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
-  const [data, setData] = useState<SkillSupplyResult | null>(null);
+// ── Projects Subtab Component ────────────────────────────────────────────────
+const PROJECT_STATUS_BADGE: Record<string, string> = {
+  "in progress": "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20",
+  completed: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20",
+  "on hold": "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20",
+  blocked: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20",
+};
+
+const EMPTY_PROJECT_FORM = { name: "", status: "In Progress", owner: "" };
+const EMPTY_MEMBER_FORM = { employee_name: "", efforts_percent: "100" };
+
+function ProjectsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
+  const [rows, setRows] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState(EMPTY_PROJECT_FORM);
+
+  const [detailProject, setDetailProject] = useState<ProjectRow | null>(null);
+  const [detail, setDetail] = useState<ProjectDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [memberForm, setMemberForm] = useState(EMPTY_MEMBER_FORM);
+  const [addingMember, setAddingMember] = useState(false);
 
   const fetch_ = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/portal/pmo/skill-supply?top_n=12`, { headers: authHeaders });
-      setData(await res.json());
+      const res = await fetch(`/api/pmo/projects?page_size=100`, { headers: authHeaders });
+      const data = await res.json();
+      setRows(data.items ?? []);
     } catch {
-      toast.error("Failed to load skill-supply analysis");
-      setData({ ok: false, message: "Failed to load skill-supply analysis." });
+      toast.error("Failed to load projects");
+      setRows([]);
     } finally {
       setLoading(false);
     }
@@ -259,9 +264,6 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
   useEffect(() => {
     Promise.resolve().then(() => fetch_());
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const rows = data?.rows ?? [];
-  const s = data?.summary ?? {};
 
   const totalPages = Math.ceil(rows.length / pageSize);
   const paginatedRows = useMemo(() => {
@@ -273,130 +275,133 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
     setCurrentPage(1);
   }, [rows.length, pageSize]);
 
+  const createProject = async () => {
+    if (!form.name.trim()) {
+      toast.error("Project name is required");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/pmo/projects`, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      flyBanner(`Project "${form.name}" created`);
+      setDialogOpen(false);
+      setForm(EMPTY_PROJECT_FORM);
+      fetch_();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Failed to create project");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const fetchDetail = useCallback(async (name: string) => {
+    setDetailLoading(true);
+    try {
+      const res = await fetch(`/api/pmo/projects/detail?name=${encodeURIComponent(name)}`, {
+        headers: authHeaders,
+      });
+      if (!res.ok) throw new Error("Failed");
+      setDetail(await res.json());
+    } catch {
+      toast.error("Failed to load project detail");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [authHeaders]);
+
+  const openDetail = (r: ProjectRow) => {
+    setDetailProject(r);
+    setMemberForm(EMPTY_MEMBER_FORM);
+    fetchDetail(r.name);
+  };
+
+  const addMember = async () => {
+    if (!detailProject || !memberForm.employee_name.trim()) {
+      toast.error("Employee name is required");
+      return;
+    }
+    setAddingMember(true);
+    try {
+      const res = await fetch(`/api/employees/allocations/manual`, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({
+          employee_name: memberForm.employee_name.trim(),
+          project_name: detailProject.name,
+          efforts_percent: Number(memberForm.efforts_percent) || 0,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      flyBanner(`Added ${memberForm.employee_name.trim()} to ${detailProject.name}`);
+      setMemberForm(EMPTY_MEMBER_FORM);
+      fetchDetail(detailProject.name);
+      fetch_();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Failed to add member");
+    } finally {
+      setAddingMember(false);
+    }
+  };
+
+  const exportRows = rows.map((r) => ({
+    Name: r.name,
+    Status: r.status,
+    "Completion %": r.completion_pct ?? "",
+    Owner: r.owner ?? "",
+    "Team Size": r.team_size ?? "",
+  }));
+
   if (loading) {
     return (
       <div className="flex flex-col h-60 items-center justify-center gap-3">
         <Loader2 className="h-7 w-7 animate-spin text-indigo-500" />
-        <span className="text-xs text-muted-foreground/80 font-medium">
-          Analyzing demand indexes...
-        </span>
+        <span className="text-xs text-muted-foreground/80 font-medium">Loading projects...</span>
       </div>
     );
   }
-  if (!data?.ok) {
-    return (
-      <div className="flex flex-col h-60 items-center justify-center text-center max-w-md mx-auto gap-3">
-        <AlertTriangle className="h-6 w-6 text-amber-500/60" />
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          {data?.message || "No data available."}
-        </p>
-      </div>
-    );
-  }
-
-  // Custom styled cards for summary metrics
-  const cards = [
-    {
-      label: "Buy Actions",
-      n: s.buy ?? 0,
-      desc: "Resource acquisition required",
-      icon: ShoppingBag,
-      glow: "from-rose-500/10 to-transparent",
-      iconCls: "bg-rose-500/10 text-rose-500 dark:text-rose-400 border border-rose-500/15",
-    },
-    {
-      label: "Train Path",
-      n: s.train ?? 0,
-      desc: "Requires candidate upskilling",
-      icon: GraduationCap,
-      glow: "from-amber-500/10 to-transparent",
-      iconCls: "bg-amber-500/10 text-amber-500 dark:text-amber-400 border border-amber-500/15",
-    },
-    {
-      label: "Redeployments",
-      n: s.redeploy ?? 0,
-      desc: "Resources roll off dates soon",
-      icon: RefreshCw,
-      glow: "from-indigo-500/10 to-transparent",
-      iconCls: "bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 border border-indigo-500/15",
-    },
-    {
-      label: "Staffable Gaps",
-      n: s.staffable ?? 0,
-      desc: "Direct bench allocation ready",
-      icon: UserCheck,
-      glow: "from-emerald-500/10 to-transparent",
-      iconCls:
-        "bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/15",
-    },
-  ];
 
   return (
     <div className="space-y-6">
-      {/* Statistics Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        {cards.map((c, idx) => {
-          const CardIcon = c.icon;
-          return (
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.04, duration: 0.3 }}
-              key={c.label}
-              className="relative overflow-hidden rounded-2xl border p-5 bg-white/60 dark:bg-zinc-900/35 border-slate-200/60 dark:border-white/[0.04] shadow-sm hover:shadow-md hover:border-slate-300 dark:hover:border-white/[0.08] transition-all duration-300 group"
-            >
-              {/* Glow accent */}
-              <div
-                className={cn(
-                  "absolute -right-10 -top-10 w-28 h-28 bg-gradient-radial blur-2xl opacity-20 pointer-events-none",
-                  c.glow,
-                )}
-              />
-
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-                  {c.label}
-                </span>
-                <div
-                  className={cn(
-                    "p-2 rounded-xl transition-transform duration-300 group-hover:scale-105",
-                    c.iconCls,
-                  )}
-                >
-                  <CardIcon className="h-4 w-4" />
-                </div>
-              </div>
-
-              <div className="mt-4 flex items-baseline gap-1.5">
-                <span className="text-3xl font-black tracking-tight text-foreground">{c.n}</span>
-                <span className="text-[11px] font-medium text-muted-foreground">skills</span>
-              </div>
-
-              <p className="mt-1 text-[11px] text-muted-foreground/80 leading-snug">{c.desc}</p>
-            </motion.div>
-          );
-        })}
-      </div>
-
       {/* Main Table Title / Actions */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
-          Skill Availability Gaps Analysis
+          Active Projects ({rows.length})
         </h2>
-        <button
-          onClick={fetch_}
-          className="flex items-center gap-1.5 text-[12px] font-semibold text-muted-foreground hover:text-foreground bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 px-3 py-1.5 rounded-lg transition-colors shadow-sm cursor-pointer"
-        >
-          <RefreshCw className="h-3 w-3" />
-          Sync Analysis
-        </button>
+        <div className="flex items-center gap-2">
+          <ExportCsvButton rows={exportRows} filename="pmo-projects.csv" />
+          <button
+            onClick={fetch_}
+            className="flex items-center gap-1.5 text-[12px] font-semibold text-muted-foreground hover:text-foreground bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 px-3 py-1.5 rounded-lg transition-colors shadow-sm cursor-pointer"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Refresh
+          </button>
+          <button
+            onClick={() => setDialogOpen(true)}
+            className="flex items-center gap-1.5 text-[12px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm cursor-pointer"
+          >
+            <Plus className="h-3 w-3" />
+            New Project
+          </button>
+        </div>
       </div>
 
-      {/* Skill Supply Table Redesign */}
       {rows.length === 0 ? (
-        <div className="flex h-40 items-center justify-center text-xs text-muted-foreground bg-white/30 dark:bg-zinc-950/10 rounded-2xl border border-slate-200/50 dark:border-zinc-800/40">
-          No skill gaps reported in system telemetry.
+        <div className="flex flex-col h-56 items-center justify-center text-center p-8 rounded-2xl border border-dashed border-slate-200/80 dark:border-zinc-800/40 bg-white/20 dark:bg-zinc-950/10 backdrop-blur-sm select-none">
+          <div className="h-11 w-11 rounded-xl bg-slate-100 dark:bg-zinc-900 flex items-center justify-center mb-3">
+            <FolderKanban className="h-5 w-5 text-muted-foreground/50" />
+          </div>
+          <p className="text-sm font-semibold text-foreground">No projects yet</p>
+          <p className="text-xs text-muted-foreground/80 mt-1 max-w-sm">
+            Create the first project to start tracking delivery status.
+          </p>
         </div>
       ) : (
         <div className="bg-white/60 dark:bg-zinc-950/20 backdrop-blur-lg border border-slate-200/60 dark:border-white/[0.04] rounded-2xl overflow-hidden shadow-elevated">
@@ -405,194 +410,71 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
               <TableHeader>
                 <TableRow className="border-b border-slate-200/60 dark:border-white/[0.05] bg-slate-50/[0.3] dark:bg-zinc-900/[0.2] select-none">
                   <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
-                    Skill
+                    Project
                   </TableHead>
                   <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
-                    Action Required
+                    Status
                   </TableHead>
                   <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
-                    Market Demand
+                    Completion
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
+                    Owner
                   </TableHead>
                   <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80 text-center">
-                    Known Capacity
-                  </TableHead>
-                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
-                    Free Now
-                  </TableHead>
-                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
-                    Rolling Off
-                  </TableHead>
-                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80">
-                    Strategic Rationale
+                    Team Size
                   </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody className="divide-y divide-slate-200/40 dark:divide-white/[0.03]">
-                {paginatedRows.map((r) => {
-                  const actionClass =
-                    ACTION_BADGE[r.action] ??
-                    "bg-zinc-500/10 text-zinc-400 border border-zinc-500/20";
-
-                  let ActionIcon = HelpCircle;
-                  if (r.action === "BUY") ActionIcon = ShoppingBag;
-                  else if (r.action === "TRAIN") ActionIcon = GraduationCap;
-                  else if (r.action === "REDEPLOY") ActionIcon = RefreshCw;
-                  else if (r.action === "STAFFABLE") ActionIcon = UserCheck;
-
-                  return (
-                    <TableRow
-                      key={r.skill_id}
-                      className="hover:bg-slate-500/[0.015] dark:hover:bg-white/[0.01] transition-colors duration-150 align-middle"
-                    >
-                      {/* Skill */}
-                      <TableCell className="py-4 px-6">
-                        <div className="font-bold text-sm text-foreground tracking-tight flex items-center gap-2">
-                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shadow-sm shadow-indigo-500/50" />
-                          {r.skill_name}
-                        </div>
-                      </TableCell>
-
-                      {/* Action */}
-                      <TableCell className="py-4 px-6">
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider select-none",
-                            actionClass,
-                          )}
-                        >
-                          <ActionIcon className="h-3 w-3" />
-                          {r.action}
-                        </span>
-                      </TableCell>
-
-                      {/* Market Demand Index with progress meter */}
-                      <TableCell className="py-4 px-6">
+                {paginatedRows.map((r) => (
+                  <TableRow
+                    key={r.id}
+                    onClick={() => openDetail(r)}
+                    className="hover:bg-slate-500/[0.03] dark:hover:bg-white/[0.02] transition-colors duration-150 align-middle cursor-pointer"
+                  >
+                    <TableCell className="py-4 px-6">
+                      <div className="font-bold text-sm text-foreground tracking-tight flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shadow-sm shadow-indigo-500/50" />
+                        {r.name}
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-4 px-6">
+                      <span
+                        className={cn(
+                          "inline-flex items-center px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider select-none",
+                          PROJECT_STATUS_BADGE[r.status?.toLowerCase()] ??
+                            "bg-zinc-500/10 text-zinc-400 border border-zinc-500/20",
+                        )}
+                      >
+                        {r.status}
+                      </span>
+                    </TableCell>
+                    <TableCell className="py-4 px-6">
+                      {r.completion_pct == null ? (
+                        <span className="text-muted-foreground/40 text-xs">—</span>
+                      ) : (
                         <div className="flex flex-col gap-1 max-w-[130px]">
-                          <div className="flex justify-between items-center text-xs font-bold text-foreground">
-                            <span>{Math.round(r.demand)}</span>
-                            <span className="text-[9px] text-muted-foreground/70 uppercase font-semibold">
-                              Score
-                            </span>
-                          </div>
+                          <span className="text-xs font-bold text-foreground">
+                            {Math.round(r.completion_pct)}%
+                          </span>
                           <div className="w-full h-1.5 bg-slate-200 dark:bg-zinc-800 rounded-full overflow-hidden shadow-inner">
                             <div
                               className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full transition-all duration-500"
-                              style={{ width: `${Math.min(Math.round(r.demand), 100)}%` }}
+                              style={{ width: `${Math.min(Math.round(r.completion_pct), 100)}%` }}
                             />
                           </div>
                         </div>
-                      </TableCell>
-
-                      {/* Known capacity count */}
-                      <TableCell className="py-4 px-6 text-center">
-                        <span className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-extrabold text-slate-700 dark:text-zinc-300 bg-slate-100 dark:bg-zinc-800/80 border border-slate-200/50 dark:border-zinc-700/50 rounded-md min-w-8 shadow-sm">
-                          {r.coverage_count}
-                        </span>
-                      </TableCell>
-
-                      {/* Free Now with mini Avatars */}
-                      <TableCell className="py-4 px-6">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={cn(
-                              "text-xs font-extrabold px-2 py-0.5 rounded-md min-w-[28px] text-center border shadow-sm",
-                              r.deployable_count > 0
-                                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                                : "bg-slate-50 dark:bg-zinc-900 text-muted-foreground border-slate-200/40 dark:border-zinc-800/40",
-                            )}
-                          >
-                            {r.deployable_count}
-                          </span>
-
-                          {r.deployable_count > 0 && r.deployable_names && (
-                            <div className="flex -space-x-1.5 overflow-visible">
-                              {r.deployable_names.slice(0, 3).map((name, i) => {
-                                const initials = name
-                                  .split(" ")
-                                  .map((w) => w[0])
-                                  .join("")
-                                  .toUpperCase()
-                                  .slice(0, 2);
-                                return (
-                                  <div
-                                    key={i}
-                                    className="group relative inline-flex items-center justify-center h-5 w-5 rounded-full ring-2 ring-white dark:ring-zinc-950 text-[9px] font-black text-white bg-gradient-to-br cursor-pointer select-none"
-                                    style={{
-                                      background:
-                                        getAvatarGradient(name) === "from-pink-500 to-violet-600"
-                                          ? "linear-gradient(135deg, #ec4899, #8b5cf6)"
-                                          : getAvatarGradient(name) === "from-blue-500 to-cyan-500"
-                                            ? "linear-gradient(135deg, #3b82f6, #06b6d4)"
-                                            : getAvatarGradient(name) ===
-                                                "from-emerald-500 to-teal-600"
-                                              ? "linear-gradient(135deg, #10b981, #059669)"
-                                              : getAvatarGradient(name) ===
-                                                  "from-amber-500 to-orange-600"
-                                                ? "linear-gradient(135deg, #f59e0b, #d97706)"
-                                                : getAvatarGradient(name) ===
-                                                    "from-indigo-500 to-purple-600"
-                                                  ? "linear-gradient(135deg, #6366f1, #a855f7)"
-                                                  : "linear-gradient(135deg, #ec4899, #f43f5e)",
-                                    }}
-                                  >
-                                    {initials}
-                                    {/* Visual Tooltip */}
-                                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 scale-0 group-hover:scale-100 transition-all duration-150 origin-bottom bg-slate-900 dark:bg-zinc-800 text-white text-[9px] px-2 py-0.5 rounded shadow-lg whitespace-nowrap z-30 font-semibold pointer-events-none border border-slate-700/50 dark:border-zinc-700/50">
-                                      {name}
-                                    </span>
-                                  </div>
-                                );
-                              })}
-                              {r.deployable_names.length > 3 && (
-                                <div className="inline-flex items-center justify-center h-5 w-5 rounded-full ring-2 ring-white dark:ring-zinc-950 text-[8px] font-bold text-muted-foreground bg-slate-100 dark:bg-zinc-850">
-                                  +{r.deployable_names.length - 3}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-
-                      {/* Rolling Off info list */}
-                      <TableCell className="py-4 px-6">
-                        {r.rolling_off.length === 0 ? (
-                           <span className="text-muted-foreground/30 text-xs">—</span>
-                        ) : (
-                          <div className="group relative inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/15 cursor-pointer font-bold shadow-sm select-none">
-                            <Calendar className="h-3 w-3 text-amber-500" />
-                            <span>{r.rolling_off.length} Roll-off</span>
-
-                            {/* Hover tooltip for list */}
-                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 scale-0 group-hover:scale-100 transition-all duration-150 origin-bottom bg-slate-900 dark:bg-zinc-900 text-white text-[10px] p-2.5 rounded-lg shadow-xl min-w-[170px] z-30 font-medium pointer-events-none border border-slate-700 dark:border-zinc-800">
-                              <div className="font-bold border-b border-white/10 pb-1 mb-1.5 uppercase text-[8px] tracking-wider text-amber-400">
-                                Roll-Off Projects
-                              </div>
-                              {r.rolling_off.map((x, k) => (
-                                <div
-                                  key={k}
-                                  className="flex justify-between gap-2 py-0.5 text-white/90"
-                                >
-                                  <span className="truncate max-w-[100px]">{x.name}</span>
-                                  <span className="font-mono text-white/55">{x.date}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </TableCell>
-
-                      {/* Rationale */}
-                      <TableCell className="py-4 px-6">
-                        <p
-                          className="text-xs text-muted-foreground/90 leading-relaxed max-w-[280px]"
-                          title={r.rationale}
-                        >
-                          {r.rationale}
-                        </p>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                      )}
+                    </TableCell>
+                    <TableCell className="py-4 px-6 text-muted-foreground">
+                      {r.owner || "—"}
+                    </TableCell>
+                    <TableCell className="py-4 px-6 text-center text-muted-foreground">
+                      {r.team_size ?? "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           </div>
@@ -605,9 +487,8 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
                 <span className="font-semibold text-foreground">{Math.min(rows.length, currentPage * pageSize)}</span> of{" "}
                 <span className="font-semibold text-foreground">{rows.length}</span> entries
               </div>
-              
+
               <div className="flex items-center gap-4.5">
-                {/* Rows per page selector */}
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-muted-foreground whitespace-nowrap">Rows per page:</span>
                   <select
@@ -623,7 +504,6 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
                   </select>
                 </div>
 
-                {/* Page buttons */}
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
@@ -665,16 +545,166 @@ function SkillSupplyTab({ authHeaders }: { authHeaders: Record<string, string> }
         </div>
       )}
 
-      {/* Footer Info */}
-      <div className="flex items-center gap-2 text-[11px] text-muted-foreground/60 select-none">
-        <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
-        <span>
-          Market demand calculated from Alchemy external job listings. Bench availability live from
-          active client allocations.
-        </span>
-        {data.note ? ` • ${data.note}` : ""}
-        {data.generated_on ? ` • Sync generated: ${data.generated_on}` : ""}
-      </div>
+      {/* Create Project Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-md bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-3xl shadow-xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-foreground flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
+                <FolderKanban className="h-4.5 w-4.5" />
+              </div>
+              New Project
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3.5 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-muted-foreground/85">Project Name *</Label>
+              <Input
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. Client Portal Revamp"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-muted-foreground/85">Status</Label>
+                <select
+                  value={form.status}
+                  onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+                  className="w-full h-9 text-sm bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 rounded-lg px-3 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  {["In Progress", "On Hold", "Blocked", "Completed"].map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-muted-foreground/85">Owner</Label>
+                <Input
+                  value={form.owner}
+                  onChange={(e) => setForm((f) => ({ ...f, owner: e.target.value }))}
+                  placeholder="Owner name"
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDialogOpen(false)}
+              className="rounded-xl font-semibold border-slate-200 dark:border-zinc-800"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={!form.name.trim() || saving}
+              onClick={createProject}
+              className="rounded-xl font-semibold bg-indigo-600 hover:bg-indigo-700 text-white border-0 shadow-md shadow-indigo-500/10"
+            >
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+              Create Project
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Project Detail Dialog */}
+      <Dialog open={!!detailProject} onOpenChange={(open) => !open && setDetailProject(null)}>
+        <DialogContent className="max-w-md bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-3xl shadow-xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-foreground flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
+                <FolderKanban className="h-4.5 w-4.5" />
+              </div>
+              {detailProject?.name}
+            </DialogTitle>
+          </DialogHeader>
+
+          {detailLoading ? (
+            <div className="flex h-32 items-center justify-center">
+              <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <div className="text-muted-foreground/70 uppercase text-[10px] font-bold tracking-wider mb-0.5">
+                    Start Date
+                  </div>
+                  <div className="font-semibold text-foreground font-mono">
+                    {detail?.start_date || "—"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground/70 uppercase text-[10px] font-bold tracking-wider mb-0.5">
+                    Owner
+                  </div>
+                  <div className="font-semibold text-foreground">{detail?.owner || "—"}</div>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-muted-foreground/70 uppercase text-[10px] font-bold tracking-wider mb-1.5">
+                  Members ({detail?.members.length ?? 0})
+                </div>
+                {!detail?.members.length ? (
+                  <p className="text-xs text-muted-foreground/60">No members staffed yet.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                    {detail.members.map((m) => (
+                      <span
+                        key={m}
+                        className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/15"
+                      >
+                        {m}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-3 border-t border-slate-200/60 dark:border-zinc-800/60 space-y-2">
+                <Label className="text-xs font-semibold text-muted-foreground/85">Add Member</Label>
+                <div className="flex gap-2">
+                  <Input
+                    value={memberForm.employee_name}
+                    onChange={(e) =>
+                      setMemberForm((f) => ({ ...f, employee_name: e.target.value }))
+                    }
+                    placeholder="Employee name"
+                    className="flex-1"
+                  />
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={memberForm.efforts_percent}
+                    onChange={(e) =>
+                      setMemberForm((f) => ({ ...f, efforts_percent: e.target.value }))
+                    }
+                    placeholder="%"
+                    className="w-16"
+                  />
+                  <Button
+                    size="sm"
+                    disabled={!memberForm.employee_name.trim() || addingMember}
+                    onClick={addMember}
+                    className="rounded-xl font-semibold bg-indigo-600 hover:bg-indigo-700 text-white border-0 shrink-0"
+                  >
+                    {addingMember ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -840,13 +870,27 @@ function BenchUpskillTab({ authHeaders }: { authHeaders: Record<string, string> 
           <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
           Bench-to-Upskill Suggestions
         </h2>
-        <button
-          onClick={fetch_}
-          className="flex items-center gap-1.5 text-[12px] font-semibold text-muted-foreground hover:text-foreground bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 px-3 py-1.5 rounded-lg transition-colors shadow-sm cursor-pointer"
-        >
-          <RefreshCw className="h-3 w-3" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <ExportCsvButton
+            rows={rows.map((r) => ({
+              Employee: r.employee_name,
+              Email: r.employee_email ?? "",
+              Department: r.department ?? "",
+              Status: r.reason,
+              "Recommended Course": r.recommended_training,
+              "Skills to Gain": r.teaches_skills.join("; "),
+              "Due By": r.suggested_due_date,
+            }))}
+            filename="bench-upskill.csv"
+          />
+          <button
+            onClick={fetch_}
+            className="flex items-center gap-1.5 text-[12px] font-semibold text-muted-foreground hover:text-foreground bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 px-3 py-1.5 rounded-lg transition-colors shadow-sm cursor-pointer"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {rows.length === 0 ? (
@@ -1246,13 +1290,27 @@ function UdemyTab({ authHeaders }: { authHeaders: Record<string, string> }) {
           <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
           Active Requests ({items.length})
         </h2>
-        <button
-          onClick={fetch_}
-          className="flex items-center gap-1.5 text-[12px] font-semibold text-muted-foreground hover:text-foreground bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 px-3 py-1.5 rounded-lg transition-colors shadow-sm cursor-pointer"
-        >
-          <RefreshCw className="h-3 w-3" />
-          Sync Inbox
-        </button>
+        <div className="flex items-center gap-2">
+          <ExportCsvButton
+            rows={items.map((r) => ({
+              Employee: r.employee_name,
+              Email: r.employee_email,
+              Platform: r.platform,
+              Course: r.course_name,
+              Status: r.status,
+              "Decided By": r.decided_by ?? "",
+              "Decision Reason": r.decision_reason ?? "",
+            }))}
+            filename="license-requests.csv"
+          />
+          <button
+            onClick={fetch_}
+            className="flex items-center gap-1.5 text-[12px] font-semibold text-muted-foreground hover:text-foreground bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 px-3 py-1.5 rounded-lg transition-colors shadow-sm cursor-pointer"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Sync Inbox
+          </button>
+        </div>
       </div>
 
       {/* Requests Card Grid */}

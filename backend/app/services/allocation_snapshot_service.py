@@ -254,6 +254,67 @@ def leading_projects_map(db: Session, as_of: Optional[datetime.date] = None) -> 
     return {k: sorted(v) for k, v in out.items()}
 
 
+# ── project roster (real projects, from live allocations) ─────────────────────
+
+def list_active_projects(db: Session, as_of: Optional[datetime.date] = None) -> list[dict]:
+    """One row per distinct project in the latest snapshot, active-only (excludes any
+    project whose status resolves to fully 'Completed' via `_project_completed`)."""
+    latest = latest_snapshot_date(db, as_of)
+    if not latest:
+        return []
+    rows = (db.query(EmployeeAllocation)
+            .filter(EmployeeAllocation.allocation_date == latest)
+            .all())
+
+    by_project: dict[str, list[EmployeeAllocation]] = {}
+    for a in rows:
+        if a.project_name:
+            by_project.setdefault(a.project_name, []).append(a)
+
+    out: list[dict] = []
+    for name, members in by_project.items():
+        status_parts = {_norm(m.project_status) for m in members if m.project_status}
+        if _project_completed(",".join(status_parts)):
+            continue
+        lead = next((m.project_lead for m in members if m.project_lead), None)
+        delivery_mgr = next((m.delivery_manager for m in members if m.delivery_manager), None)
+        out.append({
+            "name": name,
+            "status": "Ongoing",
+            "owner": lead or delivery_mgr,
+            "team_size": len({m.employee_name for m in members if m.employee_name}),
+        })
+    out.sort(key=lambda p: p["name"].lower())
+    return out
+
+
+def project_detail(db: Session, name: str) -> Optional[dict]:
+    """Full detail for one project: its real start date (earliest allocation on
+    record, across all history — not just the latest snapshot) and the current
+    member roster (latest snapshot only). None if the project has no allocation
+    history at all (e.g. a manually-created project with no one staffed yet)."""
+    rows = (db.query(EmployeeAllocation)
+            .filter(EmployeeAllocation.project_name == name)
+            .all())
+    if not rows:
+        return None
+
+    dated = [r for r in rows if r.allocation_date]
+    start_date = min((r.allocation_date for r in dated), default=None)
+    # "Current" members means as-of-now, not as-of-the-forward-planned-pipeline —
+    # exclude rows beyond today the same way latest_snapshot_date() does everywhere else.
+    today = _today()
+    current_dated = [d for d in (r.allocation_date for r in dated) if d <= today]
+    latest = max(current_dated, default=None)
+
+    current = [r for r in rows if r.allocation_date == latest]
+    members = sorted({r.employee_name for r in current if r.employee_name})
+    lead = next((r.project_lead for r in current if r.project_lead), None)
+    dm = next((r.delivery_manager for r in current if r.delivery_manager), None)
+
+    return {"name": name, "start_date": start_date, "owner": lead or dm, "members": members}
+
+
 # ── pipeline demand (forward-planned months) ──────────────────────────────────
 
 def pipeline_demand(db: Session, group_by: str = "project_name",

@@ -12,6 +12,7 @@ import {
   PaginationEllipsis,
 } from "@/components/ui/pagination";
 import { Input } from "@/components/ui/input";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import {
   Table,
   TableBody,
@@ -142,8 +143,16 @@ export function LoginHistory() {
       </Card>
 
       <Card className="flex-1">
-        <CardHeader className="pb-2">
+        <CardHeader className="pb-2 flex-row items-center justify-between">
           <CardTitle className="text-sm">Logins</CardTitle>
+          <ExportCsvButton
+            rows={entries.map((e) => ({
+              When: formatDate(e.created_at),
+              User: e.actor_name || e.actor_email,
+              Email: e.actor_email,
+            }))}
+            filename="login-history.csv"
+          />
         </CardHeader>
         <CardContent>
           {loading ? (

@@ -12,6 +12,7 @@ import {
 import { flyBanner } from "@/lib/fly-banner";
 import type { AttendanceSchedulePrefill } from "@/lib/chat-store";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -219,6 +220,16 @@ function ReportMode({
               Showing 12 of {report.members!.length}. The emailed Excel has everyone.
             </p>
           )}
+          <div className="flex items-center gap-2">
+          <ExportCsvButton
+            rows={report.members!.map((m) => ({
+              Employee: m.employee,
+              Department: m.department,
+              Present: presentCount(m),
+              Absent: m.absent,
+            }))}
+            filename="team-attendance.csv"
+          />
           <Button
             onClick={emailNow}
             disabled={emailing}
@@ -231,6 +242,7 @@ function ReportMode({
             )}
             Email me this report (with Excel)
           </Button>
+          </div>
         </>
       )}
     </Shell>

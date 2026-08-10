@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 
 interface EmployeeSearchResult {
   id: number;
@@ -309,10 +310,22 @@ export function RoleManagement() {
 
         {/* Assigned Roles List */}
         <div className="rounded-xl border border-[var(--border)] bg-card/40 p-6 space-y-6">
-          <h2 className="text-[15px] font-bold text-foreground flex items-center gap-2">
-            <Shield className="h-4.5 w-4.5 text-[var(--clarity)]" />
-            Assigned Overrides & Custom Roles
-          </h2>
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-[15px] font-bold text-foreground flex items-center gap-2">
+              <Shield className="h-4.5 w-4.5 text-[var(--clarity)]" />
+              Assigned Overrides & Custom Roles
+            </h2>
+            <ExportCsvButton
+              rows={assignedRoles.map((record) => ({
+                Name: record.name,
+                Email: record.email,
+                Designation: record.designation || "",
+                Department: record.department || "",
+                "Assigned Role": record.role,
+              }))}
+              filename="assigned-role-overrides.csv"
+            />
+          </div>
 
           <div className="overflow-x-auto">
             {isLoadingList ? (
