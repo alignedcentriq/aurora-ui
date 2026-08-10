@@ -521,6 +521,10 @@ function LayoutComponent() {
     !location.pathname.startsWith("/documents") &&
     !location.pathname.startsWith("/control-hub");
 
+  // The home tab always plays the dark hero video behind the top bar, so the bar
+  // stays dark to match it there regardless of theme; every other page follows theme.
+  const isHome = location.pathname === "/";
+
   return (
     <div className="flex h-screen h-[100dvh] w-full bg-background overflow-hidden flex-row">
       {/* --- DESKTOP LEFT SIDEBAR --- */}
@@ -1079,12 +1083,24 @@ function LayoutComponent() {
       {/* --- RIGHT SIDE CONTENT AREA --- */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative">
         {/* --- WORKSPACE TOP BAR (all screen sizes) --- */}
-        <header className="h-14 sm:h-16 flex items-center justify-between gap-2 px-3 sm:px-6 border-b border-border bg-background/90 backdrop-blur-xl z-20 shrink-0 select-none">
+        {/* On the home tab the video background is always dark, so the bar stays dark
+            to match it regardless of theme; everywhere else it follows the theme. */}
+        <header
+          className={cn(
+            "h-14 sm:h-16 flex items-center justify-between gap-2 px-3 sm:px-6 backdrop-blur-xl z-20 shrink-0 select-none",
+            isHome ? "border-b border-white/10 bg-[#090f21]/90" : "border-b border-border bg-background/90",
+          )}
+        >
           {/* Left: Hamburger (mobile) + Logo/Brand (mobile only) */}
           <div className="flex items-center gap-2">
             <button
               onClick={() => setMobileMenuOpen(true)}
-              className="flex lg:hidden h-9 w-9 items-center justify-center rounded-xl border border-border bg-muted/40 hover:bg-muted/70 text-foreground transition-all cursor-pointer shadow-sm"
+              className={cn(
+                "flex lg:hidden h-9 w-9 items-center justify-center rounded-xl border transition-all cursor-pointer shadow-sm",
+                isHome
+                  ? "border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                  : "border-border bg-muted/40 hover:bg-muted/70 text-foreground",
+              )}
               title="Open Navigation"
               aria-label="Open Navigation"
             >
@@ -1092,14 +1108,31 @@ function LayoutComponent() {
             </button>
             <Link to="/" className="flex lg:hidden items-center gap-2 hover:opacity-95 transition-opacity">
               <Logo size="sm" />
-              <BrandName className="text-sm font-bold tracking-tight text-foreground" withAI={true} />
+              <BrandName
+                className={cn("text-sm font-bold tracking-tight", isHome ? "text-white" : "text-foreground")}
+                withAI={true}
+              />
             </Link>
           </div>
 
           {/* Right: bell icons */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <ProactiveNudgeFeed triggerClassName="rounded-full border-border bg-muted/40 hover:bg-muted/70 text-foreground" />
-            <ActivityBell triggerClassName="rounded-full border-border bg-muted/40 hover:bg-muted/70 text-foreground" />
+            <ProactiveNudgeFeed
+              triggerClassName={cn(
+                "rounded-full",
+                isHome
+                  ? "border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                  : "border-border bg-muted/40 hover:bg-muted/70 text-foreground",
+              )}
+            />
+            <ActivityBell
+              triggerClassName={cn(
+                "rounded-full",
+                isHome
+                  ? "border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                  : "border-border bg-muted/40 hover:bg-muted/70 text-foreground",
+              )}
+            />
           </div>
         </header>
 

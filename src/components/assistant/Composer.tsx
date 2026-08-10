@@ -46,6 +46,8 @@ type Props = {
   hideAttach?: boolean;
   /** Hide the /slash command picker — used in the portal copilot sidebar where navigation shortcuts are irrelevant. */
   hideSlash?: boolean;
+  /** Renders as dark frosted glass instead of a solid card — used over the home tab's video background. */
+  onVideoBg?: boolean;
 };
 
 interface AttachedFile {
@@ -130,6 +132,7 @@ export function Composer({
   placeholders,
   hideAttach,
   hideSlash,
+  onVideoBg,
 }: Props) {
   // Portal-specific placeholders when provided, else the global rotating set.
   const activePlaceholders = placeholders && placeholders.length > 0 ? placeholders : PLACEHOLDERS;
@@ -473,10 +476,13 @@ export function Composer({
       <div className="relative">
         <div
           className={cn(
-            "relative flex flex-col rounded-[24px] border bg-card/60 backdrop-blur-xl shadow-lg transition-all p-2",
+            "relative flex flex-col rounded-[24px] border backdrop-blur-2xl shadow-lg transition-all p-2",
+            onVideoBg ? "bg-white/10" : "bg-card/60",
             isFocused && !disabled
               ? "border-primary/50 ring-2 ring-primary/10 shadow-xl"
-              : "border-border",
+              : onVideoBg
+                ? "border-white/20"
+                : "border-border",
           )}
           onFocus={() => setIsFocused(true)}
           onBlur={(e) => {
@@ -495,13 +501,30 @@ export function Composer({
                 (f) => !slashQuery || f.name.toLowerCase().includes(slashQuery.toLowerCase()),
               );
               return (
-                <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-border bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden max-h-72 overflow-y-auto">
-                  <div className="px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60 flex items-center gap-1.5 sticky top-0 bg-card/95 backdrop-blur-xl border-b border-border/40">
+                <div
+                  className={cn(
+                    "absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border backdrop-blur-2xl shadow-2xl overflow-hidden max-h-72 overflow-y-auto",
+                    onVideoBg ? "border-white/15 bg-[#0c1224]/90" : "border-border bg-card/95",
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-widest flex items-center gap-1.5 sticky top-0 backdrop-blur-2xl border-b",
+                      onVideoBg
+                        ? "text-white/50 bg-[#0c1224]/90 border-white/10"
+                        : "text-muted-foreground/60 bg-card/95 border-border/40",
+                    )}
+                  >
                     <Hash className="h-3 w-3" />
                     {slashQuery ? `Results for "/${slashQuery}"` : "Forms & Apps"}
                   </div>
                   {filtered.length === 0 ? (
-                    <div className="px-4 py-3 text-[13px] text-muted-foreground">
+                    <div
+                      className={cn(
+                        "px-4 py-3 text-[13px]",
+                        onVideoBg ? "text-white/60" : "text-muted-foreground",
+                      )}
+                    >
                       No matches for &quot;/{slashQuery}&quot;
                     </div>
                   ) : (
@@ -514,7 +537,11 @@ export function Composer({
                         }}
                         className={cn(
                           "flex items-center gap-3 w-full px-4 py-2.5 text-left transition-colors",
-                          i === slashIndex ? "bg-primary/10" : "hover:bg-secondary/50",
+                          i === slashIndex
+                            ? "bg-primary/10"
+                            : onVideoBg
+                              ? "hover:bg-white/10"
+                              : "hover:bg-secondary/50",
                         )}
                       >
                         <div
@@ -541,7 +568,12 @@ export function Composer({
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <p className="text-[13px] font-medium text-foreground truncate">
+                            <p
+                              className={cn(
+                                "text-[13px] font-medium truncate",
+                                onVideoBg ? "text-white" : "text-foreground",
+                              )}
+                            >
                               {item.name}
                             </p>
                             <span
@@ -570,7 +602,12 @@ export function Composer({
                             const hasDesc = item.kind === "form" ? (item.description || item.category) : desc;
                             if (!hasDesc) return null;
                             return (
-                              <p className="text-[11px] text-muted-foreground truncate">
+                              <p
+                                className={cn(
+                                  "text-[11px] truncate",
+                                  onVideoBg ? "text-white/50" : "text-muted-foreground",
+                                )}
+                              >
                                 {item.kind === "form"
                                   ? `${item.category ? item.category + " · " : ""}${item.description}`
                                   : desc}
@@ -588,18 +625,35 @@ export function Composer({
           {/* @mention dropdown */}
           {mentionQuery !== null &&
             (loadingMentions || mentionResults.length > 0 || mentionQuery.length >= 1) && (
-              <div className="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border border-border bg-card/95 backdrop-blur-xl shadow-2xl overflow-hidden">
+              <div
+                className={cn(
+                  "absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border backdrop-blur-2xl shadow-2xl overflow-hidden",
+                  onVideoBg ? "border-white/15 bg-[#0c1224]/90" : "border-border bg-card/95",
+                )}
+              >
                 {mentionQuery === "" && mentionResults.length > 0 && (
-                  <div className="px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+                  <div
+                    className={cn(
+                      "px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-widest",
+                      onVideoBg ? "text-white/50" : "text-muted-foreground/60",
+                    )}
+                  >
                     Recent
                   </div>
                 )}
                 {loadingMentions && mentionResults.length === 0 ? (
                   <div className="flex items-center justify-center py-4">
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    <Loader2
+                      className={cn("h-4 w-4 animate-spin", onVideoBg ? "text-white/60" : "text-muted-foreground")}
+                    />
                   </div>
                 ) : mentionResults.length === 0 ? (
-                  <div className="px-4 py-3 text-[13px] text-muted-foreground">
+                  <div
+                    className={cn(
+                      "px-4 py-3 text-[13px]",
+                      onVideoBg ? "text-white/60" : "text-muted-foreground",
+                    )}
+                  >
                     No users found for &quot;{mentionQuery}&quot;
                   </div>
                 ) : (
@@ -612,7 +666,11 @@ export function Composer({
                       }}
                       className={cn(
                         "flex items-center gap-3 w-full px-4 py-2.5 text-left transition-colors",
-                        i === mentionIndex ? "bg-primary/10" : "hover:bg-secondary/50",
+                        i === mentionIndex
+                          ? "bg-primary/10"
+                          : onVideoBg
+                            ? "hover:bg-white/10"
+                            : "hover:bg-secondary/50",
                       )}
                     >
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-[11px] font-bold">
@@ -624,10 +682,20 @@ export function Composer({
                           .toUpperCase()}
                       </div>
                       <div className="min-w-0">
-                        <p className="text-[13px] font-medium text-foreground truncate">
+                        <p
+                          className={cn(
+                            "text-[13px] font-medium truncate",
+                            onVideoBg ? "text-white" : "text-foreground",
+                          )}
+                        >
                           {user.name}
                         </p>
-                        <p className="text-[11px] text-muted-foreground truncate">
+                        <p
+                          className={cn(
+                            "text-[11px] truncate",
+                            onVideoBg ? "text-white/50" : "text-muted-foreground",
+                          )}
+                        >
                           {user.designation}
                           {user.department ? ` · ${user.department}` : ""}
                         </p>
@@ -717,10 +785,18 @@ export function Composer({
                 }
               }}
               disabled={disabled}
-              className="max-h-[200px] min-h-[40px] w-full resize-none bg-transparent px-4 py-2 text-[15px] leading-relaxed text-foreground outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+              className={cn(
+                "max-h-[200px] min-h-[40px] w-full resize-none bg-transparent px-4 py-2 text-[15px] leading-relaxed outline-none disabled:opacity-50 disabled:cursor-not-allowed",
+                onVideoBg ? "text-white" : "text-foreground",
+              )}
             />
             {!value && (
-              <div className="absolute left-4 top-2 pointer-events-none select-none text-[15px] leading-relaxed text-muted-foreground/40 overflow-hidden h-[24px] flex items-center pr-8">
+              <div
+                className={cn(
+                  "absolute left-4 top-2 pointer-events-none select-none text-[15px] leading-relaxed overflow-hidden h-[24px] flex items-center pr-8",
+                  onVideoBg ? "text-white/60" : "text-muted-foreground/40",
+                )}
+              >
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={currentPlaceholderIdx}
@@ -745,7 +821,12 @@ export function Composer({
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploading}
-                  className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-all hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                  className={cn(
+                    "flex h-9 w-9 items-center justify-center rounded-full transition-all disabled:opacity-50",
+                    onVideoBg
+                      ? "text-white/70 hover:bg-white/15 hover:text-white"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                  )}
                   title="Attach file"
                 >
                   {uploading ? (
@@ -767,7 +848,9 @@ export function Composer({
                   "flex h-9 w-9 items-center justify-center rounded-full transition-all",
                   voiceMode
                     ? "bg-primary/15 text-primary ring-2 ring-primary/30"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                    : onVideoBg
+                      ? "text-white/70 hover:bg-white/15 hover:text-white"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                 )}
                 title={voiceMode ? "Exit voice mode" : "Hands-free voice mode"}
               >
@@ -795,7 +878,9 @@ export function Composer({
                     "flex h-9 w-9 items-center justify-center rounded-full transition-all",
                     slashQuery !== null
                       ? "bg-primary/15 text-primary ring-2 ring-primary/30"
-                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                      : onVideoBg
+                        ? "text-white/70 hover:bg-white/15 hover:text-white"
+                        : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                   )}
                   title="Forms & Apps Menu"
                 >
@@ -816,7 +901,12 @@ export function Composer({
                     type="button"
                     onClick={onStop}
                     title="Stop generating"
-                    className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary text-foreground ring-1 ring-border shadow-sm transition-all hover:bg-secondary/70"
+                    className={cn(
+                      "flex h-9 w-9 items-center justify-center rounded-full shadow-sm transition-all",
+                      onVideoBg
+                        ? "bg-white/15 text-white ring-1 ring-white/25 hover:bg-white/25"
+                        : "bg-secondary text-foreground ring-1 ring-border hover:bg-secondary/70",
+                    )}
                   >
                     <Square className="h-3.5 w-3.5 fill-current" />
                   </motion.button>
