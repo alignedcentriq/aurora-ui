@@ -240,6 +240,10 @@ def borrow_book_by_name(
     name_lower = book_name.lower()
     match = next((b for b in books if name_lower in b["title"].lower()), None)
     if not match:
+        from app.services.fuzzy_match import best_fuzzy_match
+        best = best_fuzzy_match(book_name, [b["title"] for b in books])
+        if best:
+            return f"No available book matching '{book_name}' found. Did you mean **{best}**?"
         titles = ", ".join(b["title"] for b in books[:5])
         return f"No available book matching '{book_name}' found. Available books include: {titles}."
     email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)

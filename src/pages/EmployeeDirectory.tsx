@@ -45,6 +45,16 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+  SheetClose,
+  SheetTrigger,
+  SheetFooter,
+} from "@/components/ui/sheet";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -2282,12 +2292,38 @@ export function EmployeeDirectory() {
             </div>
           </div>
 
-          {/* Active enrichment filter chips (driven by the copilot sidebar) */}
-          {enrichFilterActive && (
+          {/* Active filter chips (manual and assistant-driven) */}
+          {activeFilterCount > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground/70">
-                Assistant filter
+                Active filters
               </span>
+              {dept && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/30 bg-[#e0e7ff] dark:bg-indigo-950/20 px-2.5 py-1 text-[12px] font-bold text-indigo-600 dark:text-indigo-400">
+                  <Building2 className="h-3.5 w-3.5" />
+                  Dept: {dept}
+                  <button
+                    onClick={() => setDept("")}
+                    className="ml-0.5 rounded-full hover:bg-indigo-500/20 p-0.5 transition-colors"
+                    title="Remove department filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {desig && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-[#f5f3ff] dark:bg-violet-950/20 px-2.5 py-1 text-[12px] font-bold text-violet-600 dark:text-violet-400">
+                  <Briefcase className="h-3.5 w-3.5" />
+                  Desig: {desig}
+                  <button
+                    onClick={() => setDesig("")}
+                    className="ml-0.5 rounded-full hover:bg-violet-500/20 p-0.5 transition-colors"
+                    title="Remove designation filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
               {skillFilters.length > 0 && (
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-[#1f86e0]/30 bg-[#1f86e0]/10 dark:bg-primary/15 px-2.5 py-1 text-[12px] font-bold text-[#1f86e0] dark:text-primary">
                   <Sparkles className="h-3.5 w-3.5" />
@@ -2458,7 +2494,11 @@ export function EmployeeDirectory() {
                 </span>
               )}
               <button
-                onClick={clearAssistantFilters}
+                onClick={() => {
+                  setDept("");
+                  setDesig("");
+                  clearAssistantFilters();
+                }}
                 className="text-[11px] font-bold text-rose-500 hover:text-rose-600 hover:underline"
               >
                 Clear
@@ -2487,112 +2527,79 @@ export function EmployeeDirectory() {
             </div>
           )}
 
-          {/* Rich Filter Panel — slides open below the controls row */}
-          {showMobileFilters && (
-            <div className="animate-in fade-in slide-in-from-top-2 duration-200 rounded-2xl border border-slate-200/60 dark:border-white/[0.07] bg-white/95 dark:bg-card shadow-lg overflow-hidden mt-0.5">
-              {/* Panel header */}
-              <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 dark:border-white/[0.06]">
-                <span className="text-[11px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                  <Filter className="h-3.5 w-3.5" />
-                  Filters
+          {/* Rich Filter Panel — slides open as a Radix Sheet from the right side */}
+          <Sheet open={showMobileFilters} onOpenChange={setShowMobileFilters}>
+            <SheetContent
+              side="right"
+              className="w-full sm:max-w-md flex flex-col h-full p-0 gap-0 border-l border-slate-200 dark:border-white/[0.08] bg-white/95 dark:bg-zinc-950/95 backdrop-blur-xl"
+            >
+              <SheetHeader className="px-6 py-5 border-b border-slate-100 dark:border-white/[0.06] flex flex-row items-center justify-between space-y-0 shrink-0">
+                <div className="flex items-center gap-2">
+                  <SlidersHorizontal className="h-4 w-4 text-[#1f86e0]" />
+                  <SheetTitle className="text-lg font-bold text-foreground">Filters</SheetTitle>
                   {activeFilterCount > 0 && (
-                    <span className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-[#1f86e0] text-[9px] font-black text-white px-1.5">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#1f86e0] text-[10px] font-black text-white px-1">
                       {activeFilterCount}
                     </span>
                   )}
-                </span>
+                </div>
                 {activeFilterCount > 0 && (
                   <button
-                    onClick={() => { setDept(""); setDesig(""); setAvailableOnly(false); setCertifiedOnly(false); clearAssistantFilters(); }}
-                    className="text-[11px] font-bold text-rose-500 hover:text-rose-600"
+                    onClick={() => {
+                      setDept("");
+                      setDesig("");
+                      setAvailableOnly(false);
+                      setCertifiedOnly(false);
+                      clearAssistantFilters();
+                    }}
+                    className="text-[12px] font-bold text-rose-500 hover:text-rose-600 transition-colors"
                   >
                     Clear all
                   </button>
                 )}
-              </div>
+              </SheetHeader>
 
-              <div className="p-4 space-y-4">
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
                 {/* Quick toggles */}
-                <div className="flex flex-wrap gap-2">
-                  {/* Available now */}
-                  <button
-                    onClick={() => setAvailableOnly(!availableOnly)}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold border transition-all",
-                      availableOnly
-                        ? "border-teal-500 bg-teal-500/10 text-teal-700 dark:text-teal-300"
-                        : "border-slate-200/70 dark:border-white/[0.08] text-slate-600 dark:text-slate-300 hover:border-teal-400"
-                    )}
-                  >
-                    <UserCheck className="h-3.5 w-3.5" />
-                    Available Now
-                  </button>
-                  {/* Certified only */}
-                  <button
-                    onClick={() => setCertifiedOnly(!certifiedOnly)}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold border transition-all",
-                      certifiedOnly
-                        ? "border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-300"
-                        : "border-slate-200/70 dark:border-white/[0.08] text-slate-600 dark:text-slate-300 hover:border-sky-400"
-                    )}
-                  >
-                    <BadgeCheck className="h-3.5 w-3.5" />
-                    Certified Only
-                  </button>
+                <div className="space-y-3">
+                  <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">Quick Toggles</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {/* Available now */}
+                    <button
+                      onClick={() => setAvailableOnly(!availableOnly)}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12px] font-bold border transition-all cursor-pointer",
+                        availableOnly
+                          ? "border-teal-500 bg-teal-500/10 text-teal-700 dark:text-teal-300 shadow-sm"
+                          : "border-slate-200/70 dark:border-white/[0.08] text-slate-600 dark:text-slate-300 hover:border-teal-400/50 bg-slate-50/50 dark:bg-white/[0.02]"
+                      )}
+                    >
+                      <UserCheck className="h-3.5 w-3.5" />
+                      Available Now
+                    </button>
+                    {/* Certified only */}
+                    <button
+                      onClick={() => setCertifiedOnly(!certifiedOnly)}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12px] font-bold border transition-all cursor-pointer",
+                        certifiedOnly
+                          ? "border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-300 shadow-sm"
+                          : "border-slate-200/70 dark:border-white/[0.08] text-slate-600 dark:text-slate-300 hover:border-sky-400/50 bg-slate-50/50 dark:bg-white/[0.02]"
+                      )}
+                    >
+                      <BadgeCheck className="h-3.5 w-3.5" />
+                      Certified Only
+                    </button>
+                  </div>
                 </div>
 
-                {/* Department chips */}
-                {departments.length > 0 && (
-                  <div className="space-y-2">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">Department</span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {departments.slice(0, 24).map((d) => (
-                        <button
-                          key={d}
-                          onClick={() => setDept(dept === d ? "" : d)}
-                          className={cn(
-                            "rounded-xl px-2.5 py-1 text-[11px] font-bold border transition-all",
-                            dept === d
-                              ? "border-[#1f86e0] bg-[#1f86e0]/10 text-[#1f86e0] dark:text-primary"
-                              : "border-slate-200/60 dark:border-white/[0.06] text-slate-600 dark:text-slate-300 hover:border-[#1f86e0]/40 hover:bg-[#1f86e0]/5"
-                          )}
-                        >
-                          {d}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Designation chips */}
-                {designations.length > 0 && (
-                  <div className="space-y-2">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">Designation</span>
-                    <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-                      {designations.slice(0, 30).map((d) => (
-                        <button
-                          key={d}
-                          onClick={() => setDesig(desig === d ? "" : d)}
-                          className={cn(
-                            "rounded-xl px-2.5 py-1 text-[11px] font-bold border transition-all",
-                            desig === d
-                              ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300"
-                              : "border-slate-200/60 dark:border-white/[0.06] text-slate-600 dark:text-slate-300 hover:border-violet-400/40 hover:bg-violet-500/5"
-                          )}
-                        >
-                          {d}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <Separator className="bg-slate-100 dark:bg-white/[0.06]" />
 
                 {/* Min availability % */}
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">Min. Free Capacity</span>
-                    <span className="text-[12px] font-bold text-emerald-600 dark:text-emerald-400">
+                    <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">Min. Free Capacity</h4>
+                    <span className="text-[12px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 px-2 py-0.5 rounded-md">
                       {minAvailabilityPercent !== null ? `≥ ${minAvailabilityPercent}%` : "Any"}
                     </span>
                   </div>
@@ -2607,12 +2614,12 @@ export function EmployeeDirectory() {
                         const v = parseInt(e.target.value, 10);
                         setMinAvailabilityPercent(v > 0 ? v : null);
                       }}
-                      className="flex-1 h-1.5 rounded-full accent-[#1f86e0] cursor-pointer"
+                      className="flex-1 h-1.5 rounded-full accent-[#1f86e0] cursor-pointer bg-slate-100 dark:bg-white/[0.08]"
                     />
                     {minAvailabilityPercent !== null && (
                       <button
                         onClick={() => setMinAvailabilityPercent(null)}
-                        className="text-slate-400 hover:text-slate-600 transition-colors"
+                        className="text-slate-400 hover:text-slate-600 transition-colors p-1 hover:bg-slate-100 dark:hover:bg-white/10 rounded-full"
                       >
                         <X className="h-3.5 w-3.5" />
                       </button>
@@ -2622,9 +2629,68 @@ export function EmployeeDirectory() {
                     {[0, 25, 50, 75, 100].map((v) => <span key={v}>{v}%</span>)}
                   </div>
                 </div>
+
+                <Separator className="bg-slate-100 dark:bg-white/[0.06]" />
+
+                {/* Department chips */}
+                {departments.length > 0 && (
+                  <div className="space-y-3">
+                    <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">Department</h4>
+                    <div className="flex flex-wrap gap-1.5 max-h-[180px] overflow-y-auto pr-1">
+                      {departments.map((d) => (
+                        <button
+                          key={d}
+                          onClick={() => setDept(dept === d ? "" : d)}
+                          className={cn(
+                            "rounded-xl px-3 py-1.5 text-[11px] font-bold border transition-all cursor-pointer",
+                            dept === d
+                              ? "border-[#1f86e0] bg-[#1f86e0]/10 text-[#1f86e0] dark:text-primary dark:border-primary/40 shadow-sm"
+                              : "border-slate-200/60 dark:border-white/[0.06] bg-slate-50/30 dark:bg-white/[0.01] text-slate-600 dark:text-slate-300 hover:border-[#1f86e0]/40 hover:bg-[#1f86e0]/5"
+                          )}
+                        >
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <Separator className="bg-slate-100 dark:bg-white/[0.06]" />
+
+                {/* Designation chips */}
+                {designations.length > 0 && (
+                  <div className="space-y-3">
+                    <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">Designation</h4>
+                    <div className="flex flex-wrap gap-1.5 max-h-[220px] overflow-y-auto pr-1">
+                      {designations.map((d) => (
+                        <button
+                          key={d}
+                          onClick={() => setDesig(desig === d ? "" : d)}
+                          className={cn(
+                            "rounded-xl px-3 py-1.5 text-[11px] font-bold border transition-all cursor-pointer",
+                            desig === d
+                              ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300 dark:border-violet-500/40 shadow-sm"
+                              : "border-slate-200/60 dark:border-white/[0.06] bg-slate-50/30 dark:bg-white/[0.01] text-slate-600 dark:text-slate-300 hover:border-violet-400/40 hover:bg-violet-500/5"
+                          )}
+                        >
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+
+              <div className="px-6 py-4 border-t border-slate-100 dark:border-white/[0.06] bg-slate-50/50 dark:bg-zinc-900/30 flex items-center justify-end gap-3 shrink-0">
+                <button
+                  onClick={() => setShowMobileFilters(false)}
+                  className="w-full rounded-xl bg-[#1f86e0] hover:bg-[#186cb7] text-white font-bold text-[13px] py-2.5 transition-all shadow-md hover:shadow-lg active:scale-[0.98] cursor-pointer"
+                >
+                  Apply Filters
+                </button>
+              </div>
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
 

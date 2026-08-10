@@ -35,40 +35,39 @@ log = logging.getLogger(__name__)
 
 
 class ServerBusyError(Exception):
-    """Raised when ml01 Ollama rejects a request because its pending-request queue is full.
+    """Raised when Groq rejects a request with a 429 rate-limit response.
 
-    Unlike a connection error, this is not a model failure — the server is reachable but
-    saturated.  Do NOT count it against the circuit breaker and do NOT fall back to another
-    model on the same server; surface it to the user as a transient busy signal instead.
+    Unlike a connection error, this is not a model failure — Groq is reachable but
+    throttling us. Do NOT count it against the circuit breaker and do NOT fall back to
+    another model; surface it to the user as a transient busy signal instead.
     """
 
 
-# Phrases Ollama uses when its request queue is exhausted (checked case-insensitively).
-_BUSY_PHRASES = ("maximum pending requests exceeded", "server busy")
+# Phrases checked case-insensitively against the exception text — Groq's 429
+# rate-limit shape (OpenAI-compatible error body:
+# {"error": {"type": "rate_limit_exceeded", ...}}).
+_BUSY_PHRASES = (
+    "rate_limit_exceeded", "rate limit reached", "too many requests",
+)
 
-# Retry config for transient server-busy signals. A previous long request may still be
-# in Ollama's queue; we back off and retry rather than instantly surfacing an error.
-# Kept short (≤2s total) so the SSE connection stays alive and the client receives the
-# busy event rather than seeing a silent connection close.
+# Retry config for a transient Groq 429. We back off and retry rather than instantly
+# surfacing an error. Kept short (≤2s total) so the SSE connection stays alive and the
+# client receives the busy event rather than seeing a silent connection close.
 _BUSY_MAX_RETRIES = 2
 _BUSY_RETRY_DELAYS = [0.5, 1.5]  # seconds between attempts
 
 
 def _is_server_busy(exc: Exception) -> bool:
-    """Return True if *exc* (or its cause) signals that the Ollama queue is full."""
+    """Return True if *exc* (or its cause) signals that Groq is rate-limiting us
+    (429 response)."""
     text = (str(exc) + " " + str(getattr(exc, "__cause__", "") or "")).lower()
     return any(p in text for p in _BUSY_PHRASES)
 
 
-# ── ml01 load-reject tracking + resident-model rescue ────────────────────────
-# Observed failure mode on the shared ml01 box (2026-07-09): Ollama instantly
-# rejects ANY request for a model that is not already resident ("server busy,
-# please try again. maximum pending requests exceeded") while the resident model
-# answers in <1s — the scheduler's load queue is wedged or misconfigured; the
-# box is NOT actually under load. Retrying the same model can never succeed in
-# that state, so once busy retries are exhausted we answer on a model that is
-# already in memory (degraded but alive) and record the reject so the Control
-# Hub can show the real reason instead of an idle-looking dashboard.
+# ── load-reject tracking ──────────────────────────────────────────────────────
+# Counts how often Groq rejects a request with a 429 (rate-limit) response, so the
+# Control Hub can show real throttling instead of an idle-looking dashboard when
+# chats are being degraded to a fallback model or a busy signal.
 
 _load_reject_count = 0
 _load_reject_last: float = 0.0            # time.time() of the latest reject
@@ -91,41 +90,6 @@ def get_load_reject_status() -> dict:
     }
 
 
-def _hot_fallback_model(tier: str) -> Optional[str]:
-    """A model currently resident on ml01 (per /api/ps) to answer on while model
-    loads are being rejected — strongest configured candidate first, else any
-    resident non-embedding model. Returns None when nothing usable is loaded, or
-    when the tier's own primary IS resident (busy then means real saturation, and
-    shifting load to a sibling model on the same box would make it worse)."""
-    try:
-        from app.config import settings
-        from app.services.llm_controls_service import ollama_residency, tier_params
-        loaded = [m["name"] for m in (ollama_residency().get("models") or [])]
-    except Exception:  # noqa: BLE001 — rescue is best-effort, never raise from here
-        return None
-    if not loaded:
-        return None
-
-    def _same(a: str, b: str) -> bool:
-        strip = lambda s: s[: -len(":latest")] if s.endswith(":latest") else s  # noqa: E731
-        return strip(a or "") == strip(b or "")
-
-    try:
-        primary = tier_params(tier)["model"]
-    except Exception:  # noqa: BLE001
-        primary = ""
-    if primary and any(_same(primary, name) for name in loaded):
-        return None  # primary is resident yet busy → genuine saturation, don't pile on
-
-    for cand in (settings.SERVICE_MODEL_NAME, settings.FAST_MODEL_NAME):
-        if cand and not _same(cand, primary) and any(_same(cand, name) for name in loaded):
-            return cand
-    for name in loaded:
-        if "embed" not in name and not _same(name, primary):
-            return name
-    return None
-
-
 # TTFT threshold before we hedge with a fallback stream
 TTFT_HEDGE_SECONDS = 8.0
 
@@ -138,9 +102,7 @@ BREAKER_FAILURE_THRESHOLD = 3
 BREAKER_OPEN_SECONDS = 120.0
 
 # Fallback chain, strongest-first. The fallback for a tier is the first entry that
-# differs from the tier's live primary model. llama3.1:8b leads because the agent and
-# service tiers do real tool-calling and llama3.2:3b refuses tool calls (see config.py);
-# 3b remains the last resort when 8b IS the primary that just failed.
+# differs from the tier's live primary model.
 def _fallback_model_for(tier: str) -> str:
     from app.config import settings
     from app.services.llm_controls_service import tier_params
@@ -151,7 +113,7 @@ def _fallback_model_for(tier: str) -> str:
     for candidate in (settings.SERVICE_MODEL_NAME, settings.FAST_MODEL_NAME):
         if candidate and candidate != primary:
             return candidate
-    return "llama3.2:3b"
+    return settings.FAST_MODEL_NAME
 
 # ── In-process circuit breaker state ─────────────────────────────────────────
 # Redis sync is best-effort; in-process state is always authoritative for THIS worker.
@@ -233,7 +195,6 @@ def _build_llm(
             max_retries=0,
             timeout=cfg["timeout"] if cfg.get("timeout") is not None else (default_timeout or 30),
             stream_usage=True,
-            extra_body={"keep_alive": "30m"},
         )
         max_tokens = cfg["max_tokens"] if cfg.get("max_tokens") is not None else default_max_tokens
         if max_tokens is not None:
@@ -318,20 +279,13 @@ def resilient_invoke(
                 if attempt < _BUSY_MAX_RETRIES:
                     delay = _BUSY_RETRY_DELAYS[attempt]
                     log.warning(
-                        "ML01 server busy for tier %r — retrying in %.1fs (attempt %d/%d)",
+                        "Groq rate-limited tier %r — retrying in %.1fs (attempt %d/%d)",
                         tier, delay, attempt + 1, _BUSY_MAX_RETRIES,
                     )
                     time.sleep(delay)
                     continue
                 _note_load_reject()
-                hot = _hot_fallback_model(tier)
-                if hot:
-                    log.warning("ml01 rejecting model loads — answering tier %r on resident model %r", tier, hot)
-                    try:
-                        return _prepare(tier, build, hot, default_timeout, default_max_tokens).invoke(messages)
-                    except Exception as hot_exc:  # noqa: BLE001
-                        log.warning("Resident-model rescue failed for tier %r: %s", tier, hot_exc)
-                log.warning("ML01 server busy for tier %r — rejecting after %d retries", tier, _BUSY_MAX_RETRIES)
+                log.warning("Groq rate-limited tier %r — rejecting after %d retries", tier, _BUSY_MAX_RETRIES)
                 raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
             _breaker.record_failure(tier)
             log.warning("Primary invoke failed for tier %r (%s) — retrying on fallback %r",
@@ -363,20 +317,13 @@ async def resilient_ainvoke(
                 if attempt < _BUSY_MAX_RETRIES:
                     delay = _BUSY_RETRY_DELAYS[attempt]
                     log.warning(
-                        "ML01 server busy for tier %r — retrying in %.1fs (attempt %d/%d)",
+                        "Groq rate-limited tier %r — retrying in %.1fs (attempt %d/%d)",
                         tier, delay, attempt + 1, _BUSY_MAX_RETRIES,
                     )
                     await asyncio.sleep(delay)
                     continue
                 _note_load_reject()
-                hot = await asyncio.to_thread(_hot_fallback_model, tier)
-                if hot:
-                    log.warning("ml01 rejecting model loads — answering tier %r on resident model %r", tier, hot)
-                    try:
-                        return await _prepare(tier, build, hot, default_timeout, default_max_tokens).ainvoke(messages)
-                    except Exception as hot_exc:  # noqa: BLE001
-                        log.warning("Resident-model rescue failed for tier %r: %s", tier, hot_exc)
-                log.warning("ML01 server busy for tier %r — rejecting after %d retries", tier, _BUSY_MAX_RETRIES)
+                log.warning("Groq rate-limited tier %r — rejecting after %d retries", tier, _BUSY_MAX_RETRIES)
                 raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
             _breaker.record_failure(tier)
             log.warning("Primary ainvoke failed for tier %r (%s) — retrying on fallback %r",
@@ -489,7 +436,7 @@ async def resilient_stream(
                                 delay = _BUSY_RETRY_DELAYS[busy_retries]
                                 busy_retries += 1
                                 log.warning(
-                                    "ML01 server busy for tier %r — retrying stream in %.1fs (attempt %d/%d)",
+                                    "Groq rate-limited tier %r — retrying stream in %.1fs (attempt %d/%d)",
                                     tier, delay, busy_retries, _BUSY_MAX_RETRIES,
                                 )
                                 await asyncio.sleep(delay)
@@ -500,16 +447,7 @@ async def resilient_stream(
                                 ttft_deadline = time.monotonic() + TTFT_HEDGE_SECONDS
                                 continue
                             _note_load_reject()
-                            hot = await asyncio.to_thread(_hot_fallback_model, tier)
-                            if hot and not fallback_active and not got_primary_token:
-                                log.warning("ml01 rejecting model loads — streaming tier %r on resident model %r", tier, hot)
-                                fallback_task = asyncio.create_task(
-                                    _fill_queue(_stream_llm(tier, messages, hot), fallback_queue)
-                                )
-                                fallback_active = True
-                                is_fallback = True
-                                continue
-                            log.warning("ML01 server busy for tier %r — stopping stream after %d retries", tier, busy_retries)
+                            log.warning("Groq rate-limited tier %r — stopping stream after %d retries", tier, busy_retries)
                             raise ServerBusyError("The AI server is too busy right now. Please try again in a moment.") from exc
                         _breaker.record_failure(tier)
                         if not fallback_active:

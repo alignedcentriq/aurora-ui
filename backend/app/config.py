@@ -6,31 +6,14 @@ _ROOT = Path(__file__).resolve().parent.parent.parent  # centriq_ai/
 load_dotenv(_ROOT / ".env.local", override=True)
 load_dotenv()  # fallback: .env
 
-ALIGNED_LLM_BASE_URL = "http://ml01.alignedautomation.com:11434/v1"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 AUTO_BASE_URL_VALUES = {"", "auto", "platform"}
 LOCAL_INFRA_HOST = "127.0.0.1"
-ALIGNED_LLM_HOST = "ml01.alignedautomation.com"
-
-
-def _append_no_proxy(*hosts: str) -> None:
-    current = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
-    entries = [entry.strip() for entry in current.split(",") if entry.strip()]
-    seen = {entry.lower() for entry in entries}
-    for host in hosts:
-        if host.lower() not in seen:
-            entries.append(host)
-            seen.add(host.lower())
-    value = ",".join(entries)
-    os.environ["NO_PROXY"] = value
-    os.environ["no_proxy"] = value
-
-
-_append_no_proxy(ALIGNED_LLM_HOST)
 
 
 def _platform_llm_base_url() -> str:
-    """Use the shared Aligned server for this Windows-only local app."""
-    return ALIGNED_LLM_BASE_URL
+    """Default LLM host for every tier — Groq's OpenAI-compatible API."""
+    return GROQ_BASE_URL
 
 
 def _resolve_llm_base_url(env_name: str, fallback_env_name: str | None = None) -> str:
@@ -71,67 +54,64 @@ def _resolve_redis_url() -> str:
 
 
 def _resolve_router_model() -> str:
-    """Use llama3.2:3b for routing/admin/IT/PMO/manager — tiny, instant, and reliable
+    """Fast, cheap model for routing/admin/IT/PMO/manager — instant and reliable
     at the structured (tool-calling) output the router needs via .with_structured_output."""
     value = os.getenv("ROUTER_MODEL_NAME", "").strip()
     if value and value.lower() not in AUTO_BASE_URL_VALUES:
         return value
-    return "llama3.2:3b"
+    return "llama-3.1-8b-instant"
 
 
 class Config:
+    # ── Groq credentials (shared by every tier below) ──
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+
     # ── Router Model (intent classification & domain routing) ──
     ROUTER_BASE_URL = _resolve_llm_base_url("ROUTER_BASE_URL")
     ROUTER_MODEL_NAME = _resolve_router_model()
-    ROUTER_API_KEY = os.getenv("ROUTER_API_KEY", "ollama")
+    ROUTER_API_KEY = os.getenv("ROUTER_API_KEY", GROQ_API_KEY)
 
     # ── Agent Model (reasoning, tool calling, response generation) ──
-    AGENT_BASE_URL = os.getenv("AGENT_BASE_URL", os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"))
-    AGENT_MODEL_NAME = os.getenv("AGENT_MODEL_NAME", os.getenv("LLM_MODEL_NAME", "gpt-oss:latest"))
-    AGENT_API_KEY = os.getenv("AGENT_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
+    # openai/gpt-oss-120b — the strongest tool-caller in Groq's catalog; this was
+    # always the intended agent model (see SERVICE_MODEL_NAME note below), just
+    # unreachable on ml01's shared GPU.
+    AGENT_BASE_URL = _resolve_llm_base_url("AGENT_BASE_URL", "LLM_BASE_URL")
+    AGENT_MODEL_NAME = os.getenv("AGENT_MODEL_NAME", os.getenv("LLM_MODEL_NAME", "openai/gpt-oss-120b"))
+    AGENT_API_KEY = os.getenv("AGENT_API_KEY", os.getenv("LLM_API_KEY", GROQ_API_KEY))
     AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
     # ── Service-agent Model (tool-calling for Admin / IT / PMO / Manager) ──
-    # These agents do real tool-calling. llama3.2:3b is too weak — it refuses
-    # ("outside my area") instead of calling the tool. gpt-oss is reliable but too
-    # heavy on the shared ml01 box (cold-reloads of the ~20B model time out >120s
-    # under contention). llama3.1:8b is the sweet spot: a capable tool-caller that
-    # stays fast on the shared server. Override via SERVICE_MODEL_NAME (e.g. gpt-oss
-    # if ml01 gets dedicated capacity).
-    SERVICE_MODEL_NAME = os.getenv("SERVICE_MODEL_NAME", "llama3.1:8b")
+    # llama-3.3-70b-versatile: a strong, fast tool-caller — cheaper/lower-latency than
+    # the agent tier's gpt-oss-120b for the higher-volume service domains. Override via
+    # SERVICE_MODEL_NAME.
+    SERVICE_MODEL_NAME = os.getenv("SERVICE_MODEL_NAME", "llama-3.3-70b-versatile")
 
     # ── General Model (greetings, small talk) ──
-    GENERAL_MODEL_NAME = os.getenv("GENERAL_MODEL_NAME", "llama3.2:3b")
+    GENERAL_MODEL_NAME = os.getenv("GENERAL_MODEL_NAME", "llama-3.1-8b-instant")
 
     # ── Summarizer Model (context_manager_node, conversation summaries) ──
-    # 8B (not 3B) here — summarization benefits from the extra capacity.
-    SUMMARIZER_MODEL_NAME = os.getenv("SUMMARIZER_MODEL_NAME", "llama3.1:8b")
+    SUMMARIZER_MODEL_NAME = os.getenv("SUMMARIZER_MODEL_NAME", "llama-3.1-8b-instant")
 
     # ── Fast Model (lightweight agents: manager, general, summarizer, suggestions) ──
-    FAST_MODEL_NAME = os.getenv("FAST_MODEL_NAME", "llama3.2:3b")
+    FAST_MODEL_NAME = os.getenv("FAST_MODEL_NAME", "llama-3.1-8b-instant")
 
     # ── Legacy aliases (backward compat) ──
     LLM_BASE_URL = _resolve_llm_base_url("LLM_BASE_URL")
-    LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-oss:latest")
-    LLM_API_KEY = os.getenv("LLM_API_KEY", "ollama")
+    LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "openai/gpt-oss-120b")
+    LLM_API_KEY = os.getenv("LLM_API_KEY", GROQ_API_KEY)
     LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
-    # ── Agent Model (reasoning, tool calling, response generation) ──
-    AGENT_BASE_URL = _resolve_llm_base_url("AGENT_BASE_URL", "LLM_BASE_URL")
-    AGENT_MODEL_NAME = os.getenv("AGENT_MODEL_NAME", os.getenv("LLM_MODEL_NAME", "gpt-oss:latest"))
-    AGENT_API_KEY = os.getenv("AGENT_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
-    AGENT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
-
     # ── Embedding + Chunking Models (semantic search / RAG ingestion) ──
+    # Groq has no embeddings endpoint, so this only matters if EMBEDDING_BACKEND is
+    # explicitly set back to "remote" against some other OpenAI-compatible server.
     EMBEDDING_BASE_URL = _resolve_llm_base_url("EMBEDDING_BASE_URL", "LLM_BASE_URL")
     EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
-    EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_API_KEY", "ollama"))
+    EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", os.getenv("LLM_API_KEY", GROQ_API_KEY))
 
-    # "remote" (default): embed via the OpenAI-compatible client against EMBEDDING_BASE_URL
-    # (shared ml01 box). "local": embed in-process via fastembed (nomic-embed-text-v1.5),
-    # removing the network round-trip + ml01 contention that dominates cache-lookup latency.
-    # See docs/specs/2026-07-21-local-embedding-backend-design.md.
-    EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "remote").strip().lower()
+    # "local" (default): embed in-process via fastembed (nomic-embed-text-v1.5) — no
+    # network hop, no dependency on ml01. "remote": embed via the OpenAI-compatible
+    # client against EMBEDDING_BASE_URL. See docs/specs/2026-07-21-local-embedding-backend-design.md.
+    EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "local").strip().lower()
 
     POLICY_CHUNK_SIZE = int(os.getenv("POLICY_CHUNK_SIZE", "800"))
     POLICY_CHUNK_OVERLAP = int(os.getenv("POLICY_CHUNK_OVERLAP", "100"))
@@ -484,10 +464,20 @@ class Config:
     # reads with one token). Blank → fall back to the first active Microsoft connection.
     ALCHEMY_SERVICE_EMAIL = os.getenv("ALCHEMY_SERVICE_EMAIL", "")
 
-    # ── TechElevate Local LMS ─────────────────────────────────────────────────
-    TECHELEVATE_LOCAL    = os.getenv("TECHELEVATE_LOCAL", "true").lower() in ("1", "true", "yes", "on")
-    TECHELEVATE_SEED_ASSIGNMENTS = os.getenv("TECHELEVATE_SEED_ASSIGNMENTS", "false").lower() in ("1", "true", "yes", "on")
-    TECHELEVATE_PORTAL_URL = os.getenv("TECHELEVATE_PORTAL_URL", "")
+    # ── TechElevate (real API — training.alignedautomation.com) ───────────────
+    # Auth is SSO-only: the browser's Azure id_token is exchanged at TECHELEVATE_BASE_URL's
+    # /auth/sso-login for a TechElevate-native JWT (see oauth_service.exchange_techelevate_id_token).
+    # No service-account credentials are available/needed — regular employees get self-scoped
+    # access; whoever's own TechElevate account has admin role gets admin-scope access too,
+    # exactly as it would on the real portal.
+    TECHELEVATE_ENABLED    = os.getenv("TECHELEVATE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    TECHELEVATE_BASE_URL   = os.getenv("TECHELEVATE_BASE_URL", "https://training.alignedautomation.com/api")
+    TECHELEVATE_PORTAL_URL = os.getenv("TECHELEVATE_PORTAL_URL", "https://training.alignedautomation.com")
+    # TODO(techelevate-migration): the admin Trainings/Assignments/Groups tabs still run against
+    # the old dummy local-DB backend (techelevate_local_service.py / techelevate_local_routes.py)
+    # until their real-API proxy modules land (see the phased plan). TECHELEVATE_LOCAL keeps that
+    # legacy path alive in the meantime; drop it once those tabs are migrated.
+    TECHELEVATE_LOCAL = os.getenv("TECHELEVATE_LOCAL", "true").lower() in ("1", "true", "yes", "on")
 
     # ── Udemy Business (Enterprise REST API, HTTP Basic auth) ─────────────────
     # Org-level service credential — NOT per-user OAuth. The client id/secret are
@@ -578,6 +568,20 @@ class Config:
     SHAREPOINT_PROJECT_EXTS = os.getenv(
         "SHAREPOINT_PROJECT_EXTS", "pdf,docx,pptx,vtt,srt,txt,md,html,htm"
     )
+
+    # ── Memory Vault (Obsidian export of Memory Brain) ─────────────────────────
+    # Regenerates the whole app's learning flywheel as an Obsidian-compatible
+    # markdown vault (one note per policy/lesson/answer/fact, wikilinked) —
+    # uncapped and untruncated, unlike the Memory Brain graph API. Read-only
+    # mirror; never hand-edit notes, they get overwritten on the next sync.
+    MEMORY_VAULT_ENABLED = os.getenv("MEMORY_VAULT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    # Folder to write the vault into. Relative paths resolve against the repo
+    # root (sibling of backend/, src/); set an absolute path to point Obsidian
+    # at a vault living elsewhere on disk.
+    MEMORY_VAULT_DIR = os.getenv("MEMORY_VAULT_DIR", "memory_vault")
+    # How often (seconds) to regenerate the vault (default 10 min). Also runs
+    # once immediately at startup so the vault is populated without waiting.
+    MEMORY_VAULT_SYNC_INTERVAL = int(os.getenv("MEMORY_VAULT_SYNC_INTERVAL_SECONDS", "600"))
 
     # ── Observability content-reveal access (Azure AD groups, validated JWT) ───
     # When enabled, the /observability reveal endpoints validate the Azure access

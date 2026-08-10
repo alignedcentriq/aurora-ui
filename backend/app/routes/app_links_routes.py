@@ -57,7 +57,6 @@ async def generate_app_draft(req: GenerateAppRequest, _: CurrentUser = Depends(r
     SSO apps the server can't reach. Returns a DRAFT only; the admin reviews it in the dialog
     and saves through the normal POST create endpoint.
     """
-    from app.services import llm_controls_service as llm_controls
     from app.services.llm_json import invoke_json
 
     description = (req.description or "").strip()
@@ -68,7 +67,6 @@ async def generate_app_draft(req: GenerateAppRequest, _: CurrentUser = Depends(r
     if url and not re.match(r"^https?://", url, re.IGNORECASE):
         url = "https://" + url
 
-    model = llm_controls.get_llm("general", default_timeout=60)
     prompt = (
         "You are cataloguing a company app/portal for an employee self-service assistant. "
         "From the admin's notes below, write its directory entry. Do NOT invent capabilities "
@@ -87,7 +85,7 @@ async def generate_app_draft(req: GenerateAppRequest, _: CurrentUser = Depends(r
         "- trigger_keywords: 3-8 SPECIFIC multi-word phrases or distinctive terms a user would type. "
         "Never use generic single words like 'form', 'request', 'status', 'help', or 'portal'."
     )
-    draft = invoke_json(model, prompt, attempts=2)
+    draft = invoke_json("general", prompt, attempts=2, default_timeout=60)
     if draft is None:
         raise HTTPException(status_code=502, detail="Couldn't draft the entry — the model didn't return usable JSON. Try again or rephrase.")
 

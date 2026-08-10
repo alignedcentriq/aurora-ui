@@ -41,7 +41,8 @@ def create_it_ticket(
     state: Annotated[dict, InjectedState],
 ):
     """Create an IT support ticket. Call when user describes a specific problem.
-    Infer category from description: Hardware (laptop/monitor/device), Network (wifi/VPN/internet), Software (app crash/error), Access (permissions/login), Security.
+    Infer category from description: Hardware (laptop/monitor/device), Network (wifi/VPN/internet), Software (app crash/error),
+    Access (permissions/login, Azure AD app registration, API permissions/scopes, Azure DevOps project creation, data/system access), Security.
     Default priority to Medium unless user says urgent/critical/emergency.
     Use user's own words as subject and description. Never use placeholder text."""
     email = state.get("user_email") or settings.DEFAULT_USER_EMAIL
@@ -120,6 +121,10 @@ def it_assistant(state: ITState):
         f"   answers or the user needs an action taken.\n"
         f"Vague request ('create a ticket', 'I have a problem') → ask what the issue is.\n"
         f"Specific non-hardware problem described → call create_it_ticket immediately.\n"
+        f"Azure DevOps project/org creation, registering an app in Azure AD/Entra ID, requesting "
+        f"API permissions/scopes for an Azure AD app, or requesting data/access to any internal "
+        f"system → call create_it_ticket with category='Access' immediately using the user's own "
+        f"details as subject/description. Do NOT ask for business justification.\n"
         f"Software install → call request_software_install immediately. Show result as-is.\n"
         f"If ticket already created in this conversation, do not create another.\n"
         f"You ARE the helpdesk — never redirect to a portal or tell user to contact IT support.\n"

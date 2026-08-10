@@ -246,16 +246,14 @@ def run_query(employees: list[dict], query_text: str) -> dict:
     directory. Returns {"matched": False} if the text isn't a filter request, the
     model's SQL fails validation, or execution errors — callers should fall back to
     the normal chat pipeline in that case."""
-    from app.services import llm_controls_service as llm_controls
     from app.services.llm_json import invoke_json
 
     text = (query_text or "").strip()
     if not text:
         return {"matched": False}
 
-    model = llm_controls.get_llm("general", default_timeout=30)
     prompt = f"{_SYSTEM_PROMPT}\n\nRequest: {text}"
-    draft = invoke_json(model, prompt, attempts=2)
+    draft = invoke_json("general", prompt, attempts=2, default_timeout=30)
     if not draft or not draft.get("is_filter"):
         return {"matched": False}
 

@@ -30,7 +30,6 @@ import {
   Undo,
   Info,
   Mail,
-  HardDrive,
   Server,
   Layers,
 } from "lucide-react";
@@ -442,7 +441,7 @@ function SoftwareTab({ authHeaders }: { authHeaders: Record<string, string> }) {
 }
 
 // ── Model Controls Tab ──────────────────────────────────────────────────────────
-// IT levers over the AI: kill switch, GPU load throttle, per-tier model params, and
+// IT levers over the AI: kill switch, concurrency throttle, per-tier model params, and
 // per-domain disable. Reads/writes /api/it/llm-controls; polls /api/chat/load live.
 
 interface TierCfg {
@@ -536,17 +535,7 @@ interface CapCheck {
   model: string;
 }
 
-// Live capacity picture from GET /api/it/llm-controls/capacity.
-interface OllamaModelResidency {
-  name: string;
-  size: number;
-  size_vram: number;
-  size_cpu: number;
-  gpu_pct: number;
-  placement: "gpu" | "partial" | "cpu";
-  context_length: number | null;
-  expires_at: string | null;
-}
+// Live capacity + traffic picture from GET /api/it/llm-controls/capacity.
 interface LiveRequest {
   email?: string;
   snippet?: string;
@@ -563,22 +552,17 @@ interface CapacityInfo {
     running?: LiveRequest[];
     waiting_list?: LiveRequest[];
   };
-  ollama: { reachable: boolean; models: OllamaModelResidency[]; error: string | null };
   capacity: {
     max_concurrency: number;
     max_queue: number;
-    loaded_models: number;
-    ollama_parallel: {
-      num_parallel: number | null;
-      max_loaded_models: number | null;
-      max_queue: number | null;
-    };
     server_capacity: {
       recommended: number;
       hard: number | null;
       basis: string;
     };
   };
+  circuit_breakers: Record<string, "open" | "closed">;
+  load_rejects: { count: number; last_at: number | null; recent: boolean };
 }
 
 const fmtElapsed = (s?: number): string => {
@@ -586,9 +570,6 @@ const fmtElapsed = (s?: number): string => {
   if (s < 60) return `${Math.round(s)}s`;
   return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 };
-
-const fmtGB = (bytes: number): string =>
-  bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
 
 export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   const [data, setData] = useState<LlmControlsResponse | null>(null);
@@ -600,7 +581,9 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
     active: number;
     waiting: number;
     max_concurrency: number;
-    ml01_load_rejects?: { count: number; last_at: number | null; recent: boolean };
+    groq_load_rejects?: { count: number; last_at: number | null; recent: boolean };
+    avg_ttft_ms?: number | null;
+    speed?: "fast" | "normal" | "slow" | null;
   } | null>(null);
   const [capacity, setCapacity] = useState<CapacityInfo | null>(null);
   const [capChecks, setCapChecks] = useState<Record<string, CapCheck>>({});
@@ -674,7 +657,7 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
     };
   }, []);
 
-  // Real capacity picture — app queue + Ollama GPU/CPU residency (cached ~3s server-side).
+  // Real traffic picture — app queue + circuit-breaker health (cached ~3s server-side).
   useEffect(() => {
     let active = true;
     const tick = async () => {
@@ -937,8 +920,8 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
       {/* ── Load throttle + live capacity bar ── */}
       <Card
         icon={<Gauge className="h-4 w-4 text-primary" />}
-        title="GPU Load Throttle"
-        desc="Adjust system-wide limits for parallel generations. Extra incoming requests enter a queue before receiving a busy signal. Applied instantly."
+        title="Concurrency Throttle"
+        desc="Adjust system-wide limits for parallel generations sent to Groq. Extra incoming requests enter a queue before receiving a busy signal. Applied instantly."
       >
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
           <div className="lg:col-span-7">
@@ -958,7 +941,7 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                 className="w-full sm:w-48"
               />
             </div>
-            {/* Server-capacity validation — can't admit more than ml01 can serve */}
+            {/* Capacity validation — a higher cap risks tripping Groq's rate limits */}
             {svrCap && (overHardConc || overRecommendedConc) && (
               <div
                 className={cn(
@@ -972,17 +955,17 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                 <span>
                   {overHardConc ? (
                     <>
-                      <span className="font-bold">Exceeds server capacity.</span> The shared server
-                      can serve at most <span className="font-semibold">{svrCap.hard}</span>{" "}
-                      concurrent generations. Requests above this pile onto the GPU and slow everyone
-                      down — saving is blocked until you lower it.
+                      <span className="font-bold">Exceeds the configured hard cap.</span> This
+                      account is capped at <span className="font-semibold">{svrCap.hard}</span>{" "}
+                      concurrent generations. Requests above this queue up and risk tripping Groq's
+                      rate limits, slowing everyone down — saving is blocked until you lower it.
                     </>
                   ) : (
                     <>
                       <span className="font-bold">Above the recommended ceiling of{" "}
-                      {svrCap.recommended}.</span> ml01 is a shared server and likely can't serve
-                      this many in parallel. Keep it at {svrCap.recommended} or below unless you know
-                      capacity has increased.
+                      {svrCap.recommended}.</span> Groq's account rate limits (RPM/TPM) aren't
+                      visible from here, so this is a guardrail — keep it at {svrCap.recommended} or
+                      below unless you've checked current traffic against the account's limits.
                     </>
                   )}
                   <span className="mt-1 block text-[11px] opacity-70">Basis: {svrCap.basis}</span>
@@ -1004,7 +987,7 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                         : "bg-emerald-500",
                   )}
                 />
-                Live GPU workload
+                Live request workload
               </span>
               {load && (
                 <span className="text-foreground/80 font-mono normal-case tracking-normal text-[12px]">
@@ -1045,18 +1028,17 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
         </div>
       </Card>
 
-      {/* ── Real server capacity + live GPU/CPU queue ── */}
+      {/* ── Real traffic to Groq: live queue + health ── */}
       <Card
         icon={<Server className="h-4 w-4 text-primary" />}
-        title="Server Capacity & Live Queue"
-        desc="What the shared LLM server (ml01) is actually doing right now — real GPU/CPU model placement, the live request queue, and how many requests it will serve at once. Distinct from the throttle above, which is our app-side admission cap."
+        title="Live Traffic & Health"
+        desc="What this app is actually sending to Groq right now — the live request queue, per-tier circuit-breaker health, and response speed. Distinct from the throttle above, which is our own admission cap, not something Groq exposes."
       >
         {(() => {
           const c = capacity;
           const gate = c?.gate;
-          const models = c?.ollama.models ?? [];
-          const par = c?.capacity.ollama_parallel;
-          const onCpu = models.filter((m) => m.placement !== "gpu");
+          const breakerEntries = Object.entries(c?.circuit_breakers ?? {});
+          const openBreakers = breakerEntries.filter(([, state]) => state === "open").length;
 
           return (
             <div className="flex flex-col gap-6">
@@ -1076,16 +1058,16 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                     icon: SlidersHorizontal,
                   },
                   {
-                    label: "Models resident",
-                    value: c ? String(c.capacity.loaded_models) : "—",
-                    sub: "loaded on ml01 now",
-                    icon: Cpu,
+                    label: "Circuit breakers",
+                    value: c ? `${openBreakers}/${breakerEntries.length}` : "—",
+                    sub: openBreakers > 0 ? "tiers on fallback model" : "all tiers healthy",
+                    icon: ShieldAlert,
                   },
                   {
-                    label: "Ollama parallel",
-                    value: par?.num_parallel != null ? String(par.num_parallel) : "server-set",
-                    sub: par?.num_parallel != null ? "per-model on ml01" : "not visible here",
-                    icon: Server,
+                    label: "Response speed",
+                    value: load?.speed ? load.speed[0].toUpperCase() + load.speed.slice(1) : "—",
+                    sub: load?.avg_ttft_ms != null ? `${load.avg_ttft_ms}ms avg TTFT` : "not enough traffic yet",
+                    icon: Zap,
                   },
                 ].map((t) => (
                   <div
@@ -1192,124 +1174,81 @@ export function ModelControlsTab({ authHeaders }: { authHeaders: Record<string, 
                 )}
               </div>
 
-              {/* ml01 refusing to load models — the "server busy on an idle box" condition */}
-              {load?.ml01_load_rejects?.recent && (
+              {/* Groq is rate-limiting/throttling us — recent busy/429 responses */}
+              {load?.groq_load_rejects?.recent && (
                 <div className="rounded-2xl border border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/[0.05] p-4 text-[12px] text-rose-700 dark:text-rose-300">
                   <div className="flex items-center gap-2 font-semibold">
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                    ml01 is rejecting model loads
+                    Groq is rejecting requests
                   </div>
                   <p className="mt-1.5 leading-relaxed">
-                    The Ollama server is refusing to load any model that isn&apos;t already in
-                    memory (&ldquo;maximum pending requests exceeded&rdquo;) even when it is otherwise
-                    idle — its load queue is wedged or misconfigured. Chats are being answered
-                    by whichever model is still resident. Ask the ml01 admin to restart Ollama
-                    and check OLLAMA_MAX_QUEUE / free GPU memory.{" "}
-                    ({load.ml01_load_rejects.count} reject
-                    {load.ml01_load_rejects.count === 1 ? "" : "s"} since backend start)
+                    Groq is returning busy/rate-limit responses for one or more tiers. Chats
+                    are being answered by a fallback model where possible, or shown a
+                    &ldquo;too busy, try again&rdquo; message. If this persists, check the account&apos;s
+                    Groq rate limits (RPM/TPM) against current traffic.{" "}
+                    ({load.groq_load_rejects.count} reject
+                    {load.groq_load_rejects.count === 1 ? "" : "s"} since backend start)
                   </p>
                 </div>
               )}
 
-              {/* Real GPU / CPU model placement */}
+              {/* Per-tier circuit breaker health */}
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <span className="flex items-center gap-1.5 text-[13px] font-semibold text-foreground">
-                    <HardDrive className="h-4 w-4 text-primary" />
-                    GPU / CPU placement
+                    <ShieldAlert className="h-4 w-4 text-primary" />
+                    Circuit breaker health
                   </span>
                   <span className="text-[11px] text-muted-foreground/60">
-                    live from ml01 /api/ps
+                    per-tier, auto-resets after 120s
                   </span>
                 </div>
 
                 {!c ? (
                   <div className="rounded-2xl border border-[var(--border)] bg-card/60 p-4 text-[12px] text-muted-foreground/70">
-                    Loading server state…
+                    Loading breaker state…
                   </div>
-                ) : !c.ollama.reachable ? (
-                  <div className="rounded-2xl border border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/[0.05] p-4 text-[12px] text-rose-700 dark:text-rose-300">
-                    Ollama server unreachable{c.ollama.error ? ` — ${c.ollama.error}` : ""}. VPN is
-                    required from outside the office.
-                  </div>
-                ) : models.length === 0 ? (
+                ) : breakerEntries.length === 0 ? (
                   <div className="rounded-2xl border border-[var(--border)] bg-card/60 p-4 text-[12px] text-muted-foreground/70">
-                    No models resident. The first request will pay a cold load.
+                    No breaker data yet.
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-2.5">
-                    {models.map((m) => {
-                      const gpuPct = m.gpu_pct;
-                      const cpuPct = 100 - gpuPct;
-                      const badge =
-                        m.placement === "gpu"
-                          ? {
-                              label: "GPU",
-                              cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
-                            }
-                          : m.placement === "partial"
-                            ? {
-                                label: `${gpuPct}% GPU`,
-                                cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
-                              }
-                            : {
-                                label: "On CPU",
-                                cls: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
-                              };
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {breakerEntries.map(([tier, state]) => {
+                      const open = state === "open";
                       return (
                         <div
-                          key={m.name}
-                          className="rounded-2xl border border-[var(--border)] bg-card/60 p-4"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="font-mono text-[13px] font-semibold text-foreground truncate">
-                              {m.name}
-                            </span>
-                            <span
-                              className={cn(
-                                "shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
-                                badge.cls,
-                              )}
-                            >
-                              {badge.label}
-                            </span>
-                          </div>
-                          {/* GPU vs CPU split bar */}
-                          <div className="mt-3 flex h-2.5 w-full overflow-hidden rounded-full bg-secondary dark:bg-secondary/40">
-                            <div
-                              className="h-full bg-emerald-500 transition-all"
-                              style={{ width: `${gpuPct}%` }}
-                            />
-                            <div
-                              className="h-full bg-rose-500/80 transition-all"
-                              style={{ width: `${cpuPct}%` }}
-                            />
-                          </div>
-                          <div className="mt-1.5 flex justify-between text-[11px] text-muted-foreground/70 font-mono">
-                            <span>
-                              {fmtGB(m.size_vram)} VRAM
-                              {cpuPct > 0 ? ` · ${fmtGB(m.size_cpu)} RAM` : ""}
-                            </span>
-                            <span>{fmtGB(m.size)} total</span>
-                          </div>
-                          {m.placement === "cpu" && (
-                            <div className="mt-2.5 flex items-start gap-2 text-[12px] text-rose-600 dark:text-rose-400">
-                              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                              Evicted to CPU — this model has no GPU memory, so responses will be
-                              very slow (this is the usual cause of requests that never finish).
-                            </div>
+                          key={tier}
+                          className={cn(
+                            "flex items-center justify-between gap-2 rounded-2xl border p-3",
+                            open
+                              ? "border-rose-200 dark:border-rose-500/20 bg-rose-50 dark:bg-rose-500/[0.05]"
+                              : "border-[var(--border)] bg-card/60",
                           )}
+                        >
+                          <span className="text-[12px] font-semibold text-foreground truncate">
+                            {TIER_META[tier]?.label ?? tier}
+                          </span>
+                          <span
+                            className={cn(
+                              "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase",
+                              open
+                                ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                                : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+                            )}
+                          >
+                            {open ? "Fallback" : "Healthy"}
+                          </span>
                         </div>
                       );
                     })}
-                    {onCpu.length > 0 && (
-                      <p className="text-[11px] text-muted-foreground/60 px-1">
-                        A model runs on CPU when the GPU can't hold it alongside the resident set.
-                        Freeing VRAM (fewer/smaller resident models) is the only fix — it's a shared
-                        server, so this is a coordination issue, not an app bug.
-                      </p>
-                    )}
                   </div>
+                )}
+                {openBreakers > 0 && (
+                  <p className="mt-2.5 text-[11px] text-muted-foreground/60 px-1">
+                    A breaker opens after 3 consecutive failures on that tier&apos;s primary model
+                    and auto-resets after 120s; while open, that tier answers on a fallback model.
+                  </p>
                 )}
               </div>
             </div>
@@ -1896,7 +1835,7 @@ function Card({
 
 /** Coverflow model picker — the selected model sits centred and full-size, its
  *  neighbours fan out behind it, and you step through them one at a time. Only the
- *  two cards either side of centre are mounted; a long Ollama model list would
+ *  two cards either side of centre are mounted; a long Groq model list would
  *  otherwise render dozens of off-screen cards on every tier card. */
 function ModelCoverflow({
   models,

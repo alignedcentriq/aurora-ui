@@ -363,10 +363,8 @@ def extract_project_dna(slug: str, name: str | None = None) -> dict:
 
     prompt = f"{_DNA_SCHEMA_PROMPT}\n\nProject name: {name}\n\nPROJECT MATERIAL:\n{text}\n\nJSON:"
     try:
-        from app.services import llm_controls_service as llm_controls
         from app.services.llm_json import invoke_json
-        model = llm_controls.get_llm("service", default_timeout=180)
-        data = invoke_json(model, prompt, attempts=2)
+        data = invoke_json("service", prompt, attempts=2, default_timeout=180)
     except Exception as exc:
         logger.error("[ProjectIQ] extraction error for %s: %s", slug, exc)
         return {"slug": slug, "status": "error", "reason": str(exc)}

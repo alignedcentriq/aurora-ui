@@ -702,10 +702,105 @@
 
   /* Dark frosted-glass variant for the home tab's video background */
   .chat-bubble-assistant.on-video {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.15);
     backdrop-filter: blur(16px);
     color: #fff;
+
+    /* Theme overrides to force high-contrast dark/glass values inside this bubble */
+    --background: rgba(15, 23, 42, 0.4);
+    --foreground: #ffffff;
+    --card: rgba(15, 23, 42, 0.6);
+    --card-foreground: #ffffff;
+    --popover: #09090b;
+    --popover-foreground: #f3f4f6;
+    --muted: rgba(255, 255, 255, 0.08);
+    --muted-foreground: rgba(255, 255, 255, 0.7);
+    --border: rgba(255, 255, 255, 0.12);
+    --border-strong: rgba(255, 255, 255, 0.25);
+    --secondary: rgba(255, 255, 255, 0.06);
+    --secondary-foreground: #ffffff;
+    --primary: #818cf8;
+    --primary-foreground: #ffffff;
+    --input: rgba(255, 255, 255, 0.08);
+  }
+
+  /* Premium glassmorphic widget containers inside the on-video bubble */
+  .chat-bubble-assistant.on-video .rounded-2xl.border {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    box-shadow: 
+      0 8px 32px 0 rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px) !important;
+  }
+
+  /* Subtle hover effect for the widgets */
+  .chat-bubble-assistant.on-video .rounded-2xl.border:hover {
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+    box-shadow: 
+      0 12px 40px 0 rgba(0, 0, 0, 0.4),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+  }
+
+  /* Make inputs/textareas inside on-video widgets look premium and readable */
+  .chat-bubble-assistant.on-video input,
+  .chat-bubble-assistant.on-video textarea,
+  .chat-bubble-assistant.on-video select {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    color: #ffffff !important;
+    border-radius: 12px !important;
+    transition: all 0.2s ease !important;
+  }
+
+  .chat-bubble-assistant.on-video input:focus,
+  .chat-bubble-assistant.on-video textarea:focus,
+  .chat-bubble-assistant.on-video select:focus {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-color: rgba(129, 140, 248, 0.4) !important;
+    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.15) !important;
+  }
+
+  .chat-bubble-assistant.on-video input::placeholder,
+  .chat-bubble-assistant.on-video textarea::placeholder {
+    color: rgba(255, 255, 255, 0.4) !important;
+  }
+
+  /* Adjust button styles inside widgets to look stunning in glass mode */
+  .chat-bubble-assistant.on-video button[type="submit"],
+  .chat-bubble-assistant.on-video .inline-flex.rounded-xl.bg-primary {
+    background: var(--gradient-primary) !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 15px rgba(129, 140, 248, 0.25) !important;
+    border: none !important;
+  }
+
+  .chat-bubble-assistant.on-video button[type="submit"]:hover,
+  .chat-bubble-assistant.on-video .inline-flex.rounded-xl.bg-primary:hover {
+    box-shadow: 0 6px 20px rgba(129, 140, 248, 0.35) !important;
+    opacity: 0.95;
+  }
+
+  .chat-bubble-assistant.on-video button[type="submit"]:disabled {
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: rgba(255, 255, 255, 0.3) !important;
+    box-shadow: none !important;
+  }
+
+  /* Premium styling for green external link buttons inside widgets (e.g. Zoho People leave link) */
+  .chat-bubble-assistant.on-video a.inline-flex.text-emerald-700,
+  .chat-bubble-assistant.on-video a.inline-flex.text-emerald-400 {
+    background: rgba(16, 185, 129, 0.1) !important;
+    border: 1px solid rgba(16, 185, 129, 0.25) !important;
+    color: #34d399 !important;
+  }
+  
+  .chat-bubble-assistant.on-video a.inline-flex.text-emerald-700:hover,
+  .chat-bubble-assistant.on-video a.inline-flex.text-emerald-400:hover {
+    background: rgba(16, 185, 129, 0.18) !important;
+    border-color: rgba(16, 185, 129, 0.35) !important;
   }
 
   /* No scrollbar utility */

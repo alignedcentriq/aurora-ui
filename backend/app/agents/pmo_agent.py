@@ -118,6 +118,10 @@ def get_project_status(project_name: str) -> str:
     result = PolicyService.search_projects(f"{project_name} status milestones", limit=4)
     if not result or "no results" in result.lower():
         names = _get_project_names_from_db()
+        from app.services.fuzzy_match import best_fuzzy_match
+        best = best_fuzzy_match(project_name, names)
+        if best:
+            return f"No project found matching '{project_name}'. Did you mean **{best}**?"
         return f"No project found matching '{project_name}'. Available projects: {', '.join(names)}"
     return result
 
@@ -128,6 +132,10 @@ def get_project_achievements(project_name: str) -> str:
     from app.services.policy_service import PolicyService
     result = PolicyService.search_projects(f"{project_name} achievements outcomes results", limit=4)
     if not result or "no results" in result.lower():
+        from app.services.fuzzy_match import best_fuzzy_match
+        best = best_fuzzy_match(project_name, _get_project_names_from_db())
+        if best:
+            return f"No project found matching '{project_name}'. Did you mean **{best}**?"
         return f"No project found matching '{project_name}' to retrieve achievements."
     return result
 
@@ -142,6 +150,10 @@ def generate_project_report(project_name: str, report_type: str = "project_statu
         content = PolicyService.search_projects(f"{project_name}", limit=8)
         if not content or "no results" in content.lower():
             names = _get_project_names_from_db()
+            from app.services.fuzzy_match import best_fuzzy_match
+            best = best_fuzzy_match(project_name, names)
+            if best:
+                return f"No project found matching '{project_name}'. Did you mean **{best}**?"
             return f"No project found matching '{project_name}'. Available: {', '.join(names)}"
         title = f"{project_name} - {report_type.replace('_', ' ').title()}"
         pdf_bytes = generate_pdf(
@@ -303,36 +315,22 @@ def search_udemy_courses(topic: str):
 
 @tool
 def recommend_training(topic: str, state: Annotated[dict, InjectedState] = None):
-    """Recommend trainings to upskill on a skill/topic. Checks the company's in-house
-    TechElevate catalog FIRST (free, tracked, with an assessment that updates the
-    employee's verified skills on completion); only if nothing internal matches does it
-    fall back to the Udemy Business catalog. Call when someone asks what to learn or which
-    course to take for a skill ('how do I learn ML', 'upskill in DevOps', 'training for
+    """Recommend trainings to upskill on a skill/topic. Checks the real TechElevate
+    catalog FIRST (company-provided, tracked); only if nothing matches does it fall back
+    to the Udemy Business catalog. Call when someone asks what to learn or which course
+    to take for a skill ('how do I learn ML', 'upskill in DevOps', 'training for
     Python'). topic: the skill inferred from the user's message."""
-    from app.database import SessionLocal
+    email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
     from app.services import techelevate_local_service as te
-    internal = []
-    if te.local_enabled():
-        db = SessionLocal()
-        try:
-            internal = te.recommend_for_skill(db, topic, limit=5)
-        finally:
-            db.close()
+    internal = te.recommend_for_skill_live(email, topic, limit=5)
     if internal:
-        lines = [f"Here are **in-house TechElevate trainings** for **{topic}** — company-provided, "
-                 "tracked, and they add to your verified skills on completion:\n"]
+        lines = [f"Here are **TechElevate trainings** for **{topic}** — company-provided and tracked:\n"]
         for t in internal:
-            dur = t.get("duration_minutes") or 0
-            meta = [m for m in [t.get("category"),
-                                (f"{dur // 60}h {dur % 60}m" if dur >= 60 else f"{dur}m") if dur else None] if m]
-            head = f"- **{t['title']}**" + (f" — {' · '.join(meta)}" if meta else "")
+            head = f"- **{t['title']}**" + (f" — {t['category']}" if t.get("category") else "")
             lines.append(head)
             if t.get("description"):
                 lines.append(f"  {t['description']}")
-            tags = ", ".join(t.get("skill_tags") or [])
-            if tags:
-                lines.append(f"  _Skills: {tags}_")
-        lines.append("\nWant me to assign one of these to you or your team? Just say which.")
+        lines.append("\nOpen the TechElevate tab to assign one of these to yourself or your team.")
         return "\n".join(lines)
     # Nothing internal → fall back to the live Udemy catalog.
     from app.services import udemy_business_service as udemy
@@ -352,27 +350,22 @@ def recommend_training(topic: str, state: Annotated[dict, InjectedState] = None)
 @tool
 def get_my_trainings(state: Annotated[dict, InjectedState] = None):
     """Show the caller's own TechElevate training assignments — assigned / in-progress /
-    completed, with scores. Call for 'my trainings', 'what training do I have', 'my learning
+    completed. Call for 'my trainings', 'what training do I have', 'my learning
     progress', 'my course status'."""
     email = (state or {}).get("user_email", settings.DEFAULT_USER_EMAIL)
-    from app.database import SessionLocal
     from app.services import techelevate_local_service as te
-    if not te.local_enabled():
-        return "The training portal isn't available right now."
-    db = SessionLocal()
     try:
-        rows = te.my_assignments(db, email)
-    finally:
-        db.close()
+        rows = te.my_assignments_live(email)
+    except PermissionError:
+        return ("I can't reach your TechElevate assignments right now — open the TechElevate "
+                "tab once to connect your Microsoft account, then ask me again.")
     if not rows:
         return ("You don't have any TechElevate training assignments yet. Ask me to recommend "
                 "trainings for a skill you'd like to build.")
-    order = {"In Progress": 0, "Assigned": 1, "Completed": 2, "Failed": 3}
+    order = {"in_progress": 0, "assigned": 1, "completed": 2, "failed": 3}
     lines = ["Here are your **TechElevate trainings**:\n"]
     for a in sorted(rows, key=lambda r: order.get(r["status"], 9)):
-        bits = [a["status"]]
-        if a.get("score") is not None:
-            bits.append(f"score {a['score']}%")
+        bits = [(a["status"] or "").replace("_", " ")]
         if a.get("due_date"):
             bits.append(f"due {a['due_date']}")
         lines.append(f"- **{a['training_title']}** — {' · '.join(bits)}")
@@ -618,10 +611,8 @@ def create_te_training(
     from app.services import techelevate_local_service as te
     if not te.local_enabled():
         return "The TechElevate LMS isn't enabled right now (TECHELEVATE_LOCAL is off)."
-    from app.services import llm_controls_service as llm_controls
     from app.services.llm_json import invoke_json
     full_desc = f"{topic}: {description}" if description.strip() else topic
-    model = llm_controls.get_llm("general", default_timeout=60)
     prompt = (
         "You are a corporate training designer for an internal Learning Management System. "
         "From the admin's description below, design a training course.\n\n"
@@ -644,7 +635,7 @@ def create_te_training(
         "- multi_level: true only if the topic naturally has a progression. Simple courses → false.\n"
         "- levels: include ONLY when multi_level is true. 2-4 levels with ascending difficulty.\n"
     )
-    draft = invoke_json(model, prompt, attempts=2)
+    draft = invoke_json("general", prompt, attempts=2, default_timeout=60)
     if not draft:
         return "Couldn't draft the training — the AI model didn't return usable content. Try rephrasing."
     tags = draft.get("skill_tags") or []

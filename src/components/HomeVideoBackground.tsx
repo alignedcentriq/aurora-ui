@@ -21,7 +21,7 @@ export function HomeVideoBackground() {
     <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden bg-background">
       <video
         ref={videoRef}
-        className="h-full w-full object-cover opacity-70"
+        className="h-full w-full object-cover opacity-30"
         autoPlay
         muted
         loop
@@ -31,7 +31,7 @@ export function HomeVideoBackground() {
       >
         <source src={`${import.meta.env.BASE_URL}videos/home-hero.mp4`} type="video/mp4" />
       </video>
-      <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/35 to-black/60" />
+      <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-black/45 to-black/70" />
     </div>
   );
 }

@@ -4,7 +4,7 @@ import {
   TrendingUp,
   Clock,
   Coins,
-  Wallet,
+  Cpu,
   Inbox,
   Smile,
   Loader2,
@@ -38,6 +38,8 @@ interface RoiSummary {
   value_saved: number;
   net_value: number;
   infra_cost: number;
+  llm_cost: number;
+  model_cost_breakdown: ModelCost[];
   tokens_processed: number;
   requests_handled: number;
   deflection_count: number;
@@ -45,10 +47,19 @@ interface RoiSummary {
   assumptions: Assumptions;
 }
 
+interface ModelCost {
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost: number;
+}
+
 interface Assumptions {
   currency: string;
   hourly_cost: number;
   monthly_infra_cost: number;
+  usd_to_currency_rate: number;
   minutes_saved_per_request: Record<string, number>;
 }
 
@@ -125,6 +136,32 @@ function KpiCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function ModelCostTable({ rows, currency }: { rows: ModelCost[]; currency: string }) {
+  if (!rows.length) {
+    return <p className="text-[12px] text-muted-foreground">No Groq usage in this period.</p>;
+  }
+  return (
+    <table className="w-full text-[12px]">
+      <thead>
+        <tr className="text-left text-muted-foreground/70">
+          <th className="pb-2 font-medium">Model</th>
+          <th className="pb-2 font-medium text-right">Tokens</th>
+          <th className="pb-2 font-medium text-right">Cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.model} className="border-t border-[var(--border)]">
+            <td className="py-2 pr-2 font-mono text-[11px] text-foreground truncate max-w-[160px]">{r.model}</td>
+            <td className="py-2 text-right text-muted-foreground">{r.total_tokens.toLocaleString()}</td>
+            <td className="py-2 text-right font-medium text-foreground">{money(r.cost, currency)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -248,7 +285,7 @@ export function RoiDashboard() {
             <div>
               <h1 className="text-[20px] font-bold text-foreground">Value Delivered</h1>
               <p className="text-[12px] text-muted-foreground line-clamp-1 sm:line-clamp-none">
-                Time saved, deflection & estimated value — powered by free AI
+                Time saved, deflection & estimated value — powered by Groq
               </p>
             </div>
           </div>
@@ -318,16 +355,16 @@ export function RoiDashboard() {
           <KpiCard
             title="Net Value"
             value={summary ? money(summary.net_value, cur) : "—"}
-            sub="value − infra cost"
+            sub="value − infra − AI cost"
             icon={TrendingUp}
             iconColor="text-indigo-400"
             loading={loading}
           />
           <KpiCard
-            title="Infra Cost"
-            value={summary ? money(summary.infra_cost, cur) : "—"}
-            sub="server cost, this period"
-            icon={Wallet}
+            title="AI Cost (Groq)"
+            value={summary ? money(summary.llm_cost, cur) : "—"}
+            sub={summary ? `${summary.tokens_processed.toLocaleString()} tokens, this period` : "tokens, this period"}
+            icon={Cpu}
             iconColor="text-cyan-400"
             loading={loading}
           />
@@ -370,6 +407,13 @@ export function RoiDashboard() {
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             ) : (
               <MetricChart chartType="line" series={satisfaction} unit="pct" />
+            )}
+          </ChartCard>
+          <ChartCard title="AI Cost by Model (Groq)">
+            {loading ? (
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            ) : (
+              <ModelCostTable rows={summary?.model_cost_breakdown || []} currency={cur} />
             )}
           </ChartCard>
           <ChartCard title="Scheduled Value Reports">
@@ -577,6 +621,7 @@ function AssumptionsDialog({
   const [currency, setCurrency] = useState(current?.currency ?? "INR");
   const [hourly, setHourly] = useState(current?.hourly_cost ?? 600);
   const [infra, setInfra] = useState(current?.monthly_infra_cost ?? 0);
+  const [usdRate, setUsdRate] = useState(current?.usd_to_currency_rate ?? 87);
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -596,6 +641,21 @@ function AssumptionsDialog({
       setHourly(Math.round(hourly * rate));
       setInfra(Math.round(infra * rate));
       setCurrency(newCurrency);
+
+      // Also refresh the USD→currency rate used to convert Groq's (USD-billed) token
+      // cost — a separate lookup since it's always FROM USD, not from the old currency.
+      if (newCurrency === "USD") {
+        setUsdRate(1);
+      } else {
+        try {
+          const usdRes = await fetch(`https://api.frankfurter.app/latest?from=USD&to=${newCurrency}`);
+          const usdData = await usdRes.json();
+          const usdToNew: number = usdData.rates?.[newCurrency];
+          if (usdToNew) setUsdRate(Math.round(usdToNew * 100) / 100);
+        } catch {
+          // Keep the existing usdRate — admin can still edit it manually below.
+        }
+      }
     } catch {
       setConvertError(`Could not fetch exchange rate — enter the ${newCurrency} value manually.`);
       setHourly(0);
@@ -614,6 +674,7 @@ function AssumptionsDialog({
         currency,
         hourly_cost: Number(hourly),
         monthly_infra_cost: Number(infra),
+        usd_to_currency_rate: Number(usdRate),
       };
       const res = await fetch("/api/analytics/assumptions", {
         method: "PUT",
@@ -673,8 +734,18 @@ function AssumptionsDialog({
       {field("Hourly loaded cost", hourly, setHourly)}
       {field("Monthly infrastructure cost", infra, setInfra)}
       <p className="text-[11px] text-muted-foreground/70 -mt-2 mb-4">
-        Your server/GPU cost per month. Amortized across the selected period for Net Value.
+        Any fixed hosting cost beyond AI inference (app server, DB, etc). Amortized
+        across the selected period for Net Value.
       </p>
+      {currency !== "USD" && (
+        <>
+          {field(`USD → ${currency} rate`, usdRate, setUsdRate)}
+          <p className="text-[11px] text-muted-foreground/70 -mt-2 mb-4">
+            Groq bills per token in USD. This converts the AI Cost figure into{" "}
+            {currency} — auto-filled on currency change, editable if FX drifts.
+          </p>
+        </>
+      )}
       <button
         onClick={save}
         disabled={saving || converting}

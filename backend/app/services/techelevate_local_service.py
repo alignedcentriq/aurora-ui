@@ -1,15 +1,21 @@
 """
-Local TechElevate LMS service.
+Local TechElevate catalog — now a SECONDARY data source.
 
-The external TechElevate API is unreachable in this environment (no stored Microsoft
-refresh token), so this module backs the same training experience with our own DB —
-and, crucially, closes the upskilling flywheel:
+The TechElevate tab (Control Hub) and self-scoped PMO chat tools (recommend_training,
+get_my_trainings — see recommend_for_skill_live / my_assignments_live below) talk to the
+REAL TechElevate API (training.alignedautomation.com) via app/services/techelevate/*.
+
+Everything else in this file still backs a local DB catalog, because the real API only
+lets an admin-scoped TechElevate token see OTHER people's data, and no service account is
+available here — so bench_upskill_service, team_readiness_service, manager team
+dashboards, smart_generators, and analytics_builder_service (all of which need
+cross-employee views) keep reading this local data until that's resolved:
 
     Alchemy gap  →  recommend training (internal ▸ Udemy)
         ↑                                   │
         └──  verified EmployeeSkill  ←  complete + pass (MCQ graded here)
 
-Each training carries `skill_tags` (Alchemy-aligned skill names). When an employee's
+Each local training carries `skill_tags` (Alchemy-aligned skill names). When an employee's
 assignment reaches a passing score, those skills are written back once as *verified*
 EmployeeSkill rows (certification = "TechElevate: <title>") — which resource matching
 and the PMO Skill Supply overlay already read.
@@ -40,6 +46,82 @@ CONTENT_KINDS = {"document", "link", "udemy", "video"}
 
 def local_enabled() -> bool:
     return bool(settings.TECHELEVATE_LOCAL)
+
+
+# ── Live TechElevate (real API, self-scoped) ───────────────────────────────────
+#
+# The functions below talk to the REAL TechElevate API (training.alignedautomation.com)
+# using the caller's own cached SSO session (see techelevate/session.py — populated by
+# the browser's id_token exchange on login). They're intentionally scoped to what a
+# single employee's own token can safely do: browse the catalog and view their own
+# assignments. Everything ELSE in this file below (create_training, assign_training,
+# list_assignments, generate_questions, bulk_add_questions, and the seed catalog) still
+# reads/writes the local Te* tables — bench_upskill_service, team_readiness_service,
+# manager_routes, smart_generators, and analytics_builder_service all depend on that
+# local data for TEAM-wide (cross-employee) views, which the real API can't serve
+# without an admin-scoped TechElevate token (a service account isn't available in this
+# environment — see the id_token-only auth note in techelevate_routes.py). Migrating
+# those consumers is a separate, larger follow-up.
+
+def recommend_for_skill_live(email: str, skill: str, *, limit: int = 5) -> list[dict]:
+    """Real TechElevate catalog, ranked by title/category match against `skill` (the
+    real Training model has no skill_tags field, unlike the local seed catalog)."""
+    from app.services.techelevate import session as te_session
+    from app.services.techelevate import trainings as te_trainings
+
+    token = te_session.get_cached_token(email)
+    if not token:
+        return []
+    needle = (skill or "").strip().lower()
+    if not needle:
+        return []
+    try:
+        data = te_trainings.list_trainings(token, limit=200)
+    except Exception:
+        log.warning("[techelevate] live catalog fetch failed for %s", email, exc_info=True)
+        return []
+    items = data.get("items") or data.get("results") or []
+    scored: list[tuple[int, dict]] = []
+    for t in items:
+        title = (t.get("title") or "").lower()
+        category = (t.get("category") or "").lower()
+        if needle == title:
+            score = 3
+        elif needle in title:
+            score = 2
+        elif needle in category:
+            score = 1
+        else:
+            continue
+        scored.append((score, t))
+    scored.sort(key=lambda x: (-x[0], x[1].get("title") or ""))
+    return [
+        {"id": t["id"], "title": t.get("title"), "description": t.get("description"),
+         "category": t.get("category")}
+        for _, t in scored[:limit]
+    ]
+
+
+def my_assignments_live(email: str) -> list[dict]:
+    """The caller's own real TechElevate assignments. Raises PermissionError('not_connected')
+    if their SSO session isn't cached — callers should catch this and prompt them to open
+    the TechElevate tab (which pre-warms the session) first."""
+    from app.services.techelevate import assignments as te_assignments
+    from app.services.techelevate import session as te_session
+
+    token = te_session.get_cached_token(email)
+    if not token:
+        raise PermissionError("not_connected")
+    data = te_assignments.get_my_assignments(token, email)
+    items = data.get("items") or data.get("results") or []
+    return [
+        {
+            "training_title": a.get("training_title") or f"Training #{a.get('training_id')}",
+            "status": a.get("status"),
+            "due_date": a.get("training_end_date"),
+        }
+        for a in items
+    ]
 
 
 # ── Seed catalog (mirrors the 8 trainings from the TechElevate portal spec) ────
@@ -753,7 +835,6 @@ def generate_questions(db: Session, training_id: int, *, level_id: Optional[int]
     """AI-draft MCQs grounded in the course's materials. Returns DRAFTS only (not persisted);
     an admin reviews/edits them and saves via bulk_add_questions. The actual exam is sat on the
     real TechElevate portal — this is purely the authoring aid."""
-    from app.services import llm_controls_service as llm_controls
     from app.services.llm_json import invoke_json
 
     t = db.get(TeTraining, training_id)
@@ -792,8 +873,7 @@ def generate_questions(db: Session, training_id: int, *, level_id: Optional[int]
         f"- Produce exactly {count} questions."
     )
 
-    model = llm_controls.get_llm("general", default_timeout=60)
-    draft = invoke_json(model, prompt, attempts=1)
+    draft = invoke_json("general", prompt, attempts=2, default_timeout=60)
     if not draft or not isinstance(draft.get("questions"), list):
         return {"error": "generation_failed"}
 

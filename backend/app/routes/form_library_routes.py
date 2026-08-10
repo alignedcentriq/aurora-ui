@@ -108,14 +108,12 @@ async def generate_form_draft(req: GenerateFormRequest, _: CurrentUser = Depends
     Returns a DRAFT only — nothing is persisted. The client shows a preview the admin can
     edit and confirm, which then goes through the normal POST create endpoint.
     """
-    from app.services import llm_controls_service as llm_controls
     from app.services.llm_json import invoke_json
 
     text = (req.prompt or "").strip()
     if not text:
         raise HTTPException(status_code=422, detail="Describe the form you want to create.")
 
-    model = llm_controls.get_llm("general", default_timeout=60)
     prompt = (
         "You are a form designer for an employee self-service portal. From the request below, "
         "design a fillable form.\n\n"
@@ -131,7 +129,7 @@ async def generate_form_draft(req: GenerateFormRequest, _: CurrentUser = Depends
         "'date' for dates, 'user' for picking an employee, 'image' for photo evidence.\n"
         "- Do NOT add fields for the submitter's own name/email — the portal knows the logged-in user."
     )
-    draft = invoke_json(model, prompt, attempts=2)
+    draft = invoke_json("general", prompt, attempts=2, default_timeout=60)
     if draft is None:
         raise HTTPException(status_code=502, detail="Couldn't draft the form — the model didn't return usable JSON. Try again or rephrase.")
 
@@ -157,7 +155,6 @@ async def generate_form_edit(req: EditFormRequest, _: CurrentUser = Depends(requ
     """
     import json
 
-    from app.services import llm_controls_service as llm_controls
     from app.services.llm_json import invoke_json
 
     instruction = (req.instruction or "").strip()
@@ -168,7 +165,6 @@ async def generate_form_edit(req: EditFormRequest, _: CurrentUser = Depends(requ
     if not current:
         raise HTTPException(status_code=404, detail="Form not found.")
 
-    model = llm_controls.get_llm("general", default_timeout=60)
     prompt = (
         "You are editing an existing fillable form for an employee self-service portal. "
         "Apply the requested change and return the COMPLETE revised form (not just the change).\n\n"
@@ -186,7 +182,7 @@ async def generate_form_edit(req: EditFormRequest, _: CurrentUser = Depends(requ
         "'date' for dates, 'user' for picking an employee, 'image' for photo evidence.\n"
         "- Do NOT add fields for the submitter's own name/email — the portal knows the logged-in user."
     )
-    draft = invoke_json(model, prompt, attempts=2)
+    draft = invoke_json("general", prompt, attempts=2, default_timeout=60)
     if draft is None:
         raise HTTPException(status_code=502, detail="Couldn't revise the form — the model didn't return usable JSON. Try again or rephrase.")
 

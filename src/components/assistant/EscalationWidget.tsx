@@ -7,7 +7,6 @@ import {
   Send,
   CheckCircle2,
   Loader2,
-  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-store";
@@ -37,6 +36,7 @@ interface EscalationWidgetProps {
   onEscalated?: (referenceId: string, department: string) => void;
   /** Compact trigger mode — shown inside message action bar */
   compact?: boolean;
+  onVideoBg?: boolean;
 }
 
 export function EscalationWidget({
@@ -46,6 +46,7 @@ export function EscalationWidget({
   errorType,
   onEscalated,
   compact = false,
+  onVideoBg = false,
 }: EscalationWidgetProps) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
@@ -97,14 +98,25 @@ export function EscalationWidget({
       <motion.div
         initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex items-start gap-2.5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3.5 py-2.5 mt-1"
+        className={cn(
+          "flex items-start gap-2.5 rounded-xl border px-3.5 py-2.5 mt-1",
+          onVideoBg
+            ? "border-emerald-500/30 bg-slate-900/80 backdrop-blur-md"
+            : "border-emerald-500/20 bg-emerald-500/5"
+        )}
       >
         <CheckCircle2 className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
         <div className="flex-1 min-w-0">
-          <p className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">
+          <p className={cn(
+            "text-[12px] font-semibold",
+            onVideoBg ? "text-emerald-400" : "text-emerald-700 dark:text-emerald-400"
+          )}>
             Escalation raised — {result.refId}
           </p>
-          <p className="text-[11px] text-muted-foreground mt-0.5">
+          <p className={cn(
+            "text-[11px] mt-0.5",
+            onVideoBg ? "text-zinc-300" : "text-muted-foreground"
+          )}>
             {result.dept} has been notified and will reach out to you directly.
           </p>
         </div>
@@ -118,10 +130,15 @@ export function EscalationWidget({
       <motion.button
         whileTap={{ scale: 0.9 }}
         onClick={() => setOpen(true)}
-        className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-all"
+        className={cn(
+          "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition-all",
+          onVideoBg
+            ? "text-amber-400 hover:bg-white/10"
+            : "text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+        )}
         title={`Escalate to ${dept}`}
       >
-        <AlertTriangle className="h-3.5 w-3.5" />
+        <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
         Escalate
       </motion.button>
     );
@@ -134,7 +151,12 @@ export function EscalationWidget({
         initial={{ opacity: 0, height: 0 }}
         animate={{ opacity: 1, height: "auto" }}
         exit={{ opacity: 0, height: 0 }}
-        className="rounded-xl border border-amber-500/20 bg-amber-500/5 mt-1 overflow-hidden"
+        className={cn(
+          "rounded-xl border mt-1 overflow-hidden",
+          onVideoBg
+            ? "border-amber-500/30 bg-slate-900/80 backdrop-blur-md"
+            : "border-amber-500/20 bg-amber-500/5"
+        )}
       >
         {/* Header */}
         <button
@@ -143,7 +165,10 @@ export function EscalationWidget({
         >
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-            <span className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">
+            <span className={cn(
+              "text-[12px] font-semibold",
+              onVideoBg ? "text-amber-400" : "text-amber-700 dark:text-amber-400"
+            )}>
               Escalate to {dept}
             </span>
           </div>
@@ -162,15 +187,24 @@ export function EscalationWidget({
               exit={{ opacity: 0, height: 0 }}
               className="px-3.5 pb-3.5 space-y-3 overflow-hidden"
             >
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
+              <p className={cn(
+                "text-[11px] leading-relaxed",
+                onVideoBg ? "text-zinc-300" : "text-muted-foreground"
+              )}>
                 A ticket will be created and{" "}
-                <span className="font-medium text-foreground">{dept}</span> will be notified to
+                <span className={cn(
+                  "font-medium",
+                  onVideoBg ? "text-white" : "text-foreground"
+                )}>{dept}</span> will be notified to
                 contact you directly.
               </p>
 
               {/* Priority */}
               <div>
-                <p className="text-[11px] font-medium text-foreground/70 mb-1.5">Priority</p>
+                <p className={cn(
+                  "text-[11px] font-medium mb-1.5",
+                  onVideoBg ? "text-zinc-300" : "text-foreground/70"
+                )}>Priority</p>
                 <div className="flex gap-1.5">
                   {PRIORITY_OPTIONS.map((p) => (
                     <button
@@ -184,7 +218,9 @@ export function EscalationWidget({
                             : p === "Medium"
                               ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
                               : "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
-                          : "border-border bg-background text-muted-foreground hover:border-muted-foreground",
+                          : onVideoBg
+                            ? "border-white/10 bg-white/5 text-zinc-300 hover:border-zinc-400"
+                            : "border-border bg-background text-muted-foreground hover:border-muted-foreground",
                       )}
                     >
                       {p}
@@ -195,8 +231,13 @@ export function EscalationWidget({
 
               {/* Description */}
               <div>
-                <p className="text-[11px] font-medium text-foreground/70 mb-1.5">
-                  Additional context <span className="text-muted-foreground">(optional)</span>
+                <p className={cn(
+                  "text-[11px] font-medium mb-1.5",
+                  onVideoBg ? "text-zinc-300" : "text-foreground/70"
+                )}>
+                  Additional context <span className={cn(
+                    onVideoBg ? "text-zinc-400" : "text-muted-foreground"
+                  )}>(optional)</span>
                 </p>
                 <textarea
                   autoFocus
@@ -204,7 +245,12 @@ export function EscalationWidget({
                   onChange={(e) => setDescription(e.target.value)}
                   rows={2}
                   placeholder="Describe what you were trying to do and what went wrong…"
-                  className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-amber-500/30 transition-all"
+                  className={cn(
+                    "w-full resize-none rounded-xl border px-3 py-2 text-[13px] outline-none transition-all",
+                    onVideoBg
+                      ? "border-white/15 bg-slate-900/60 text-white placeholder:text-zinc-500 focus:ring-1 focus:ring-amber-500/40"
+                      : "border-border bg-background text-foreground placeholder:text-muted-foreground/50 focus:ring-1 focus:ring-amber-500/30"
+                  )}
                 />
               </div>
 
@@ -213,7 +259,10 @@ export function EscalationWidget({
               <div className="flex items-center justify-end gap-2">
                 <button
                   onClick={() => setOpen(false)}
-                  className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                  className={cn(
+                    "text-[11px] transition-colors",
+                    onVideoBg ? "text-zinc-400 hover:text-white" : "text-muted-foreground hover:text-foreground"
+                  )}
                 >
                   Cancel
                 </button>
@@ -221,7 +270,12 @@ export function EscalationWidget({
                   whileTap={{ scale: 0.95 }}
                   onClick={handleSubmit}
                   disabled={loading}
-                  className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-all disabled:opacity-50"
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition-all disabled:opacity-50",
+                    onVideoBg
+                      ? "bg-amber-500/20 text-amber-300 hover:bg-amber-500/30"
+                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
+                  )}
                 >
                   {loading ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -247,6 +301,7 @@ interface ErrorEscalationBarProps {
   sessionId?: string;
   originalQuery?: string;
   errorType?: EscalateReason;
+  onVideoBg?: boolean;
 }
 
 export function ErrorEscalationBar(props: ErrorEscalationBarProps) {
@@ -260,10 +315,18 @@ export function ErrorEscalationBar(props: ErrorEscalationBarProps) {
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        className="flex items-center gap-2 mt-1 px-3 py-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5"
+        className={cn(
+          "flex items-center gap-2 mt-1 px-3 py-2 rounded-xl border",
+          props.onVideoBg
+            ? "border-emerald-500/30 bg-slate-900/80 backdrop-blur-md"
+            : "border-emerald-500/20 bg-emerald-500/5"
+        )}
       >
         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-        <p className="text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">
+        <p className={cn(
+          "text-[11px] font-medium",
+          props.onVideoBg ? "text-emerald-400" : "text-emerald-700 dark:text-emerald-400"
+        )}>
           Escalation {escalated} raised — the team will contact you.
         </p>
       </motion.div>

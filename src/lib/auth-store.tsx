@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
 import { cleanUrlParams } from "./utils";
+import { getIdToken } from "./api-token";
 import "./impersonation"; // installs the x-impersonate-role fetch patch on import
 
 // Fast wrapper for fetch timeout
@@ -441,6 +442,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setTimeout(() => iframe.remove(), 8000);
       } catch {
         // silent — user can still connect manually from Settings
+      }
+    })();
+  }, [accounts, inProgress]);
+
+  // Pre-warm a TechElevate session once per tab, right after SSO login, so the
+  // TechElevate tab and any server-side callers (PMO chat, manager dashboards) that
+  // need this user's TechElevate JWT don't have to wait on a live browser round-trip.
+  // Exchanges the same MSAL id_token TechElevate's own /auth/sso-login expects.
+  useEffect(() => {
+    if (accounts.length === 0 || inProgress !== InteractionStatus.None) return;
+    const email = accounts[0].username;
+    const flagKey = `te_auto_connect_${email}`;
+    if (sessionStorage.getItem(flagKey)) return;
+    sessionStorage.setItem(flagKey, "1");
+
+    (async () => {
+      try {
+        const idToken = await getIdToken();
+        if (!idToken) return;
+        await fetchWithTimeout(
+          "/api/portal/techelevate/connect",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-user-email": email },
+            body: JSON.stringify({ id_token: idToken }),
+          },
+          8000,
+        );
+      } catch {
+        // silent — the TechElevate tab will prompt to connect if this didn't work
       }
     })();
   }, [accounts, inProgress]);

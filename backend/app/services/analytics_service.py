@@ -20,12 +20,38 @@ from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
 from app.models import (
-    AiRequestLog, ChatFeedback, ConnectorCallLog, ConnectorOperation, CompanySettings,
-    Leave, Employee, EmployeeAllocation,
+    AiRequestLog, AiLlmCallLog, ChatFeedback, ConnectorCallLog, ConnectorOperation,
+    CompanySettings, Leave, Employee, EmployeeAllocation,
 )
 from app.services.allocation_snapshot_service import latest_snapshot_date
 
 log = logging.getLogger(__name__)
+
+
+# ── Groq per-token pricing (USD per 1M tokens) ──────────────────────────────────
+# Every tier now runs on Groq's pay-per-token API (see config.py), not the old
+# self-hosted ml01 box, so LLM cost is a real, computable number instead of a flat
+# amortized-infra guess. Source: groq.com/pricing — Groq's catalog/prices move
+# independently of this app, so re-check this table periodically; treat it as an
+# estimate, not a billing-grade figure. Unknown/newly-added models fall back to
+# _DEFAULT_MODEL_PRICING (the mid-tier llama-3.3-70b-versatile rate) so a model
+# added to GROQ_TOOL_CAPABLE_MODELS without a pricing entry still costs something
+# instead of silently reporting $0.
+GROQ_MODEL_PRICING_PER_1M_USD = {
+    "llama-3.1-8b-instant": {"prompt": 0.05, "completion": 0.08},
+    "llama-3.3-70b-versatile": {"prompt": 0.59, "completion": 0.79},
+    "openai/gpt-oss-120b": {"prompt": 0.15, "completion": 0.75},
+    "openai/gpt-oss-20b": {"prompt": 0.10, "completion": 0.50},
+    "qwen/qwen3.6-27b": {"prompt": 0.29, "completion": 0.59},
+    "groq/compound": {"prompt": 0.59, "completion": 0.79},
+    "groq/compound-mini": {"prompt": 0.15, "completion": 0.75},
+}
+_DEFAULT_MODEL_PRICING = GROQ_MODEL_PRICING_PER_1M_USD["llama-3.3-70b-versatile"]
+
+
+def _model_cost_usd(model: Optional[str], prompt_tokens: int, completion_tokens: int) -> float:
+    rate = GROQ_MODEL_PRICING_PER_1M_USD.get(model or "", _DEFAULT_MODEL_PRICING)
+    return (prompt_tokens / 1_000_000.0) * rate["prompt"] + (completion_tokens / 1_000_000.0) * rate["completion"]
 
 
 # ── ROI assumptions (cost model) ────────────────────────────────────────────────
@@ -33,11 +59,15 @@ log = logging.getLogger(__name__)
 DEFAULT_ROI_ASSUMPTIONS = {
     "currency": "INR",
     "hourly_cost": 600.0,                # loaded cost of one employee-hour
-    # Self-hosted free models → no per-token cost. The real cost is the fixed monthly
-    # infrastructure (GPU box, power, upkeep), amortized over the reporting period.
+    # Any *other* fixed hosting cost an org wants folded into Net Value (app server,
+    # DB, etc.) — LLM inference itself is no longer amortized here, it's computed
+    # for real below from actual Groq token usage × GROQ_MODEL_PRICING_PER_1M_USD.
     "monthly_infra_cost": 0.0,
-    "token_cost_per_1k_prompt": 0.0,     # kept for hosted-model setups; unused when 0
-    "token_cost_per_1k_completion": 0.0,
+    # USD→currency conversion applied to the computed Groq token cost (Groq bills in
+    # USD regardless of `currency`). Update as FX moves, or set currency to "USD" to
+    # skip conversion. Does not affect hourly_cost/monthly_infra_cost, which are
+    # already entered directly in `currency`.
+    "usd_to_currency_rate": 87.0,
     # Minutes of manual effort saved each time the assistant resolves a request in a domain.
     "minutes_saved_per_request": {
         "hr": 8.0, "it": 10.0, "it_support": 10.0, "admin": 6.0,
@@ -460,7 +490,7 @@ def roi_summary(db: Session, period: str = "30d", role: str = "super admin") -> 
     hours_saved = round(total_minutes / 60.0, 1)
     value_saved = round(hours_saved * a["hourly_cost"], 0)
 
-    # Tokens processed (volume — shown instead of a fake per-token cost for free models).
+    # Tokens processed (volume).
     tok = db.query(
         func.coalesce(func.sum(AiRequestLog.total_tokens), 0),
     ).filter(AiRequestLog.created_at >= cutoff)
@@ -468,9 +498,40 @@ def roi_summary(db: Session, period: str = "30d", role: str = "super admin") -> 
         tok = tok.filter(func.lower(AiRequestLog.domain).in_(scope))
     tokens_processed = int(tok.scalar() or 0)
 
-    # Cost = fixed monthly infrastructure, amortized across the reporting period.
+    # Real Groq token cost, by model — join to AiRequestLog only for the domain
+    # scope filter (AiLlmCallLog itself is already timestamped per-call).
+    model_q = db.query(
+        AiLlmCallLog.model,
+        func.coalesce(func.sum(AiLlmCallLog.prompt_tokens), 0).label("prompt_tokens"),
+        func.coalesce(func.sum(AiLlmCallLog.completion_tokens), 0).label("completion_tokens"),
+    ).join(AiRequestLog, AiLlmCallLog.request_id == AiRequestLog.id).filter(
+        AiLlmCallLog.created_at >= cutoff
+    )
+    if scope:
+        model_q = model_q.filter(func.lower(AiRequestLog.domain).in_(scope))
+    model_q = model_q.group_by(AiLlmCallLog.model)
+
+    usd_rate = 1.0 if a["currency"] == "USD" else float(a.get("usd_to_currency_rate", 87.0))
+    model_cost_breakdown = []
+    llm_cost_usd = 0.0
+    for model, prompt_tokens, completion_tokens in model_q.all():
+        prompt_tokens = int(prompt_tokens or 0)
+        completion_tokens = int(completion_tokens or 0)
+        cost_usd = _model_cost_usd(model, prompt_tokens, completion_tokens)
+        llm_cost_usd += cost_usd
+        model_cost_breakdown.append({
+            "model": model or "unknown",
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "cost": round(cost_usd * usd_rate, 2),
+        })
+    model_cost_breakdown.sort(key=lambda r: r["cost"], reverse=True)
+    llm_cost = round(llm_cost_usd * usd_rate, 2)
+
+    # Any other fixed hosting cost, amortized across the reporting period.
     infra_cost = round(a.get("monthly_infra_cost", 0.0) * (_period_days(period) / 30.0), 0)
-    net_value = round(value_saved - infra_cost, 0)
+    net_value = round(value_saved - infra_cost - llm_cost, 0)
 
     # Satisfaction.
     fb = db.query(func.avg(func.coalesce((ChatFeedback.rating + 1) / 2.0, 0.0))).filter(
@@ -488,6 +549,8 @@ def roi_summary(db: Session, period: str = "30d", role: str = "super admin") -> 
         "value_saved": value_saved,
         "net_value": net_value,
         "infra_cost": infra_cost,
+        "llm_cost": llm_cost,
+        "model_cost_breakdown": model_cost_breakdown,
         "tokens_processed": tokens_processed,
         "requests_handled": total_requests,    # treated as manual touches deflected
         "deflection_count": total_requests,
@@ -535,7 +598,9 @@ def translate_nl(db: Session, question: str, role: str = "super admin") -> dict:
         result = resilient_invoke(
             "router",
             [{"role": "system", "content": system}, {"role": "user", "content": question}],
-            build=lambda llm: llm.with_structured_output(NLConfig),
+            # function_calling: Groq's default "json_schema" structured-output mode isn't
+            # supported broadly enough across tiers/models — see router.py's _router_build.
+            build=lambda llm: llm.with_structured_output(NLConfig, method="function_calling"),
         )
         cfg = result if isinstance(result, NLConfig) else NLConfig(**dict(result))
     except Exception as exc:
@@ -599,6 +664,7 @@ def roi_pdf_bytes(summary: dict) -> bytes:
         ["Hours saved", f"{summary.get('hours_saved', 0):,}"],
         ["Estimated value", money(summary.get("value_saved", 0))],
         ["Infra cost (period)", money(summary.get("infra_cost", 0))],
+        ["AI/LLM cost — Groq, period", money(summary.get("llm_cost", 0))],
         ["Net value", money(summary.get("net_value", 0))],
         ["Requests handled (deflected)", f"{summary.get('requests_handled', 0):,}"],
         ["Tokens processed", f"{summary.get('tokens_processed', 0):,}"],
@@ -621,7 +687,9 @@ def roi_pdf_bytes(summary: dict) -> bytes:
     elems.append(Paragraph(
         f"<i>Assumptions: hourly cost {money(a.get('hourly_cost', 0))}, "
         f"monthly infrastructure cost {money(a.get('monthly_infra_cost', 0))} "
-        f"(amortized across the period).</i>",
+        f"(amortized across the period). AI/LLM cost is computed from actual Groq "
+        f"token usage per model, converted at {a.get('usd_to_currency_rate', 87.0)} "
+        f"{a.get('currency', 'INR')}/USD.</i>",
         styles["Normal"]))
 
     doc.build(elems)

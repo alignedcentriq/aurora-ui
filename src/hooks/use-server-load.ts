@@ -20,8 +20,8 @@ interface ServerLoad {
   waiting: number;
   active: number;
   maxConcurrency: number;
-  /** True when recent responses are taking noticeably long to start (CPU-bound
-   * generation can be slow even with a free slot — a separate signal from
+  /** True when recent responses are taking noticeably long to start (Groq
+   * inference can be slow even with a free slot — a separate signal from
    * queueing/concurrency). Null/false when there isn't enough recent traffic
    * to say anything meaningful. */
   serverSlow: boolean;

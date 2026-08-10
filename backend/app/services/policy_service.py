@@ -142,6 +142,34 @@ RETRIEVAL_VETO_MESSAGE = (
     "from unrelated documents or general knowledge."
 )
 
+# Prefixes a "did you mean X?" suggestion (see _expand_query) so agent.py can detect it
+# in a ToolMessage and build a clickable clarify card instead of relaying it as prose.
+DID_YOU_MEAN_SENTINEL = "DID_YOU_MEAN:"
+
+
+# Plain-word (non-acronym) vocabulary that shows up in real policy titles/categories —
+# lets _expand_query catch genuine character-level typos in domain words ("materinty"
+# -> "maternity") that the acronym-only _QUERY_SYNONYMS dict above can't. Seeded from
+# _QUERY_SYNONYMS expansions and CATEGORY_MAP keys.
+_DOMAIN_VOCAB: tuple[str, ...] = (
+    "leave", "leaves", "attendance", "reimbursement", "reimburse", "gratuity",
+    "probation", "appraisal", "onboarding", "offboarding", "grievance", "resignation",
+    "relocation", "sabbatical", "referral", "insurance", "mediclaim", "holiday", "holidays",
+    "timesheet", "background", "verification", "notice", "confidentiality", "harassment",
+    "compensatory", "variable", "incentive", "diversity", "certificate", "travel",
+    "accommodation", "salary", "increment", "bonus", "separation", "exit", "induction",
+    "maternity", "paternity", "sick", "casual", "earned", "privilege", "encashment",
+)
+
+# Real-word mix-ups (not typos, not acronyms) — a different but correctly-spelled word
+# that gets used for a domain term, often an irregular verb form or homophone. Character-
+# level fuzzy matching misses these: "left" vs "leave" scores ~0.44 similarity, well under
+# the 0.65 cutoff below, because the edit distance between the two words is genuinely large
+# even though a person reads them as "the same word". Handled as a direct lookup instead.
+_WORD_CONFUSABLES: dict[str, str] = {
+    "left": "leave",
+}
+
 
 # Common English words that must never be fuzzy-matched to an acronym.
 # (e.g. "any"/"can"/"van" share two chars with "uan" → 0.67 similarity.)
@@ -174,24 +202,36 @@ def _expand_query(query: str) -> tuple[str, str | None]:
         if re.search(r'\b' + re.escape(term) + r'\b', lower):
             extras.append(expansion)
 
+    # 1b. Known word confusables (not typos, not acronyms — see _WORD_CONFUSABLES).
+    for term, correction in _WORD_CONFUSABLES.items():
+        if re.search(r'\b' + re.escape(term) + r'\b', lower):
+            extras.append(correction)
+            suggestion = correction
+
     # 2. Fuzzy correction — only when no exact synonym matched.
     # Require length >= 4 and skip common English words so everyday words
     # ("any", "can", "what") don't collide with short acronyms ("uan").
     if not extras:
-        synonym_keys = list(_QUERY_SYNONYMS.keys())
+        candidate_pool = list(_QUERY_SYNONYMS.keys()) + list(_DOMAIN_VOCAB)
         for word in words:
             if len(word) < 4 or word in _FUZZY_STOPWORDS:
                 continue
-            # Only compare against keys of similar length (±1 char) to avoid
+            # Only compare against candidates of similar length (±1 char) to avoid
             # common words like "tell" fuzzy-matching short acronyms like "el".
-            candidate_keys = [k for k in synonym_keys if abs(len(k) - len(word)) <= 1]
-            matches = get_close_matches(word, candidate_keys, n=1, cutoff=0.65)
+            candidate_terms = [k for k in candidate_pool if abs(len(k) - len(word)) <= 1]
+            matches = get_close_matches(word, candidate_terms, n=1, cutoff=0.65)
             if matches and matches[0] != word:
                 best = matches[0]
-                expansion = _QUERY_SYNONYMS[best]
-                extras.append(expansion)
-                full_form = expansion.split()[0:4]  # first few words of expansion
-                suggestion = f"{best.upper()} ({' '.join(full_form).title()})"
+                if best in _QUERY_SYNONYMS:
+                    expansion = _QUERY_SYNONYMS[best]
+                    extras.append(expansion)
+                    full_form = expansion.split()[0:4]  # first few words of expansion
+                    suggestion = f"{best.upper()} ({' '.join(full_form).title()})"
+                else:
+                    # Plain-vocab hit ("left" -> "leave"): the corrected word itself
+                    # is both the retrieval hint and the human-readable suggestion.
+                    extras.append(best)
+                    suggestion = best
 
     expanded = query + " " + " ".join(extras) if extras else query
     return expanded, suggestion
@@ -737,27 +777,10 @@ class PolicyService:
 
     @classmethod
     def _get_embedding_remote(cls, raw_key: str) -> list | None:
-        """L3 (remote backend): call ml01 via the OpenAI-compatible client — but only attempt
-        it if the embedding model is already resident. Measured: a cold load on this shared,
-        CPU-only box can run past 20s and still fail outright (the client's own 15s timeout
-        doesn't save us — the request is already committed by then). Skipping straight to the
-        caller's fail-soft fallback (BM25/keyword search) avoids that wasted wait; the existing
-        background warmup (_try_warmup_embedding) keeps nudging the model toward resident so a
-        later call can hit this fast path."""
+        """L3 (remote backend): call the configured OpenAI-compatible embedding
+        server directly. Fails soft on any error (timeout, connection, etc.) —
+        the caller falls back to BM25/keyword search."""
         global _embedding_failed_at
-        try:
-            from app.services.llm_controls_service import ollama_residency
-            _loaded = [m.get("name", "") for m in (ollama_residency().get("models") or [])]
-            _strip = lambda s: s[:-len(":latest")] if s.endswith(":latest") else s  # noqa: E731
-            _embed_resident = any(_strip(n) == _strip(settings.EMBEDDING_MODEL_NAME) for n in _loaded)
-        except Exception:
-            _embed_resident = True  # residency check itself failed — don't block on it
-
-        if not _embed_resident:
-            _embedding_failed_at = time.time()
-            cls._try_warmup_embedding()
-            return None
-
         try:
             resp = cls._get_embedding_client().embeddings.create(
                 input=raw_key,
@@ -1185,6 +1208,7 @@ class PolicyService:
                 if not sem_ids:
                     if did_you_mean:
                         return (
+                            f"{DID_YOU_MEAN_SENTINEL}{did_you_mean}\n"
                             f"I couldn't find a policy matching your query. Did you mean "
                             f"**{did_you_mean}**? Please try again with the correct term."
                         )
@@ -1349,7 +1373,11 @@ class PolicyService:
                 query, db, limit, category_in=category_in, category_not_in=category_not_in
             )
             if fallback.startswith("No policies found") and did_you_mean:
-                return f"I couldn't find a policy matching your query. Did you mean **{did_you_mean}**? Please try again with the correct term."
+                return (
+                    f"{DID_YOU_MEAN_SENTINEL}{did_you_mean}\n"
+                    f"I couldn't find a policy matching your query. Did you mean "
+                    f"**{did_you_mean}**? Please try again with the correct term."
+                )
             return fallback
 
         finally:

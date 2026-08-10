@@ -1,7 +1,7 @@
-"""Rolling time-to-first-token (TTFT) so the UI can tell users when the shared
-LLM server (CPU-bound, no GPU) is responding slower than usual — a signal the
-concurrency gate (`app.concurrency`) can't provide on its own, since inference
-can be slow even when a slot is free (active < max_concurrency).
+"""Rolling time-to-first-token (TTFT) so the UI can tell users when Groq is
+responding slower than usual — a signal the concurrency gate (`app.concurrency`)
+can't provide on its own, since inference can be slow even when a slot is free
+(active < max_concurrency).
 
 Same Redis-with-in-process-fallback shape as `app.services.background_answers`:
 best-effort, never raises, degrades to a single-process view if Redis is down.

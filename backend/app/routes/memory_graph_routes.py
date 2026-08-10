@@ -52,8 +52,8 @@ _LEAF_CAP = 30
 # Project IQ facts (lessons/assets/experts) fan out one level deeper than other
 # lobes since they're already relational. Cap per-category-per-profile and only
 # expand the most-recent profiles so the brain doesn't get a 300-node tumor.
-_TWIG_CAP = 3
-_TWIG_PROFILE_CAP = 10
+_TWIG_CAP = 6
+_TWIG_PROFILE_CAP = 15
 
 _ALLOWED_ROLES = {"super admin"}
 
@@ -64,7 +64,7 @@ def _require_memory_access(user: CurrentUser = Depends(get_current_user)) -> Cur
     return user
 
 
-def _snip(text: str | None, n: int = 220) -> str:
+def _snip(text: str | None, n: int = 700) -> str:
     t = (text or "").strip().replace("\n", " ")
     return t[:n] + ("…" if len(t) > n else "")
 
@@ -126,7 +126,7 @@ def memory_graph(
          f"policy docs · {chunk_count} embedded chunks")
     for p in db.query(Policy).order_by(Policy.updated_at.desc()).limit(_LEAF_CAP).all():
         leaf(f"pol:{p.id}", "lobe:kb", _snip(p.title, 60), "knowledge",
-             f"{p.title}\n\nCategory: {p.category or '—'}\n\n{_snip(p.content, 400)}",
+             f"{p.title}\n\nCategory: {p.category or '—'}\n\n{_snip(p.content, 900)}",
              ts=_iso(p.updated_at))
 
     # ── 3. Curated answers — learned FAQs ──────────────────────────────────────
@@ -136,7 +136,7 @@ def memory_graph(
         tag = "seed" if a.is_seed else "learned"
         label = capability_registry.short_label(a.domain, a.sub_intent)
         leaf(f"ans:{a.id}", "lobe:ans", label, "curated",
-             f"Q: {a.query_text}\n\nA: {_snip(a.answer_text, 500)}\n\n"
+             f"Q: {a.query_text}\n\nA: {_snip(a.answer_text, 900)}\n\n"
              f"[{tag} · {a.hit_count} hits · domain: {a.domain or '—'}]",
              ts=_iso(a.created_at))
         cap_key = capability_registry.capability_for_usage(a.domain, a.sub_intent)
@@ -156,8 +156,16 @@ def memory_graph(
     )
     for domain, n in by_domain:
         label = capability_registry.short_label(domain)
+        samples = (
+            db.query(RouterExample.utterance)
+            .filter(RouterExample.is_active == True, RouterExample.domain == domain)  # noqa: E712
+            .order_by(RouterExample.created_at.desc())
+            .limit(6)
+            .all()
+        )
+        sample_lines = "\n".join(f"- {u}" for (u,) in samples)
         leaf(f"route:{domain}", "lobe:route", f"{label} · {n}", "routing",
-             f"{n} learned example phrasings route to the '{domain}' domain.")
+             f"{n} learned example phrasings route to the '{domain}' domain.\n\n{sample_lines}")
 
     # ── 5. Apps & forms — tools I can point to / open ──────────────────────────
     app_count = db.query(func.count(AppLink.id)).filter(AppLink.is_active == True).scalar() or 0  # noqa: E712
@@ -166,11 +174,11 @@ def memory_graph(
          f"{app_count} apps · {form_count} forms")
     for al in db.query(AppLink).filter(AppLink.is_active == True).limit(_LEAF_CAP // 2).all():  # noqa: E712
         leaf(f"app:{al.id}", "lobe:tools", al.name, "tools",
-             f"{al.name} (app)\n\n{_snip(al.purpose, 300)}\n\n{al.url}",
+             f"{al.name} (app)\n\n{_snip(al.purpose, 600)}\n\n{al.url}",
              ts=_iso(al.updated_at), deep_link={"kind": "external", "url": al.url})
     for ft in db.query(FormTemplate).filter(FormTemplate.enabled == True).limit(_LEAF_CAP // 2).all():  # noqa: E712
         leaf(f"form:{ft.id}", "lobe:tools", ft.name, "tools",
-             f"{ft.name} (form)\n\n{_snip(ft.description, 300)}",
+             f"{ft.name} (form)\n\nCategory: {ft.category or '—'}\n\n{_snip(ft.description, 600)}",
              deep_link={"kind": "tab", "tab": "form-library"})
 
     # ── 6. User memory — what I remember about people (PII-redacted) ────────────
@@ -215,6 +223,20 @@ def memory_graph(
                 cross_links.append({"source": f"lesson:{fb.id}", "target": f"fadopt:{cap_key}",
                                      "kind": "capability"})
 
+    # Open misses used to be a bare count in the lobe blurb with nothing to click —
+    # surface the actual backlog (capped, most recent first) so it's a worklist, not a number.
+    open_q = (
+        db.query(ChatFeedback)
+        .filter(ChatFeedback.rating == -1, ChatFeedback.triaged_at.is_(None))
+        .order_by(ChatFeedback.created_at.desc())
+    )
+    for fb in open_q.limit(15).all():
+        msg = _redact_pii(fb.user_message) or ""
+        label = capability_registry.short_label(fb.domain, fb.sub_intent)
+        leaf(f"openmiss:{fb.id}", "lobe:lessons", f"{label} (open)", "lessons",
+             f"Got wrong, not yet triaged: {msg}\n[domain: {fb.domain or '—'}]",
+             ts=_iso(fb.created_at), deep_link={"kind": "tab", "tab": "observability", "sub": "triage"})
+
     # ── 8. Insight Bus — cross-feature signals the app has noticed ─────────────
     signal_count = db.query(func.count(InsightSignalLog.id)).scalar() or 0
     lobe("lobe:insight", "Insight Bus", "insight", signal_count, "cross-feature signals")
@@ -227,9 +249,9 @@ def memory_graph(
         payload = s.payload or {}
         label = capability_registry.short_label(s.source_domain)
         project_name = payload.get("project_name")
-        summary = payload.get("risk_reasons") or payload.get("skill") or payload.get("employee_name") or ""
+        payload_lines = "\n".join(f"- {k}: {v}" for k, v in payload.items() if v not in (None, "", []))
         leaf(f"signal:{s.id}", "lobe:insight", label, "insight",
-             f"{s.signal_type}\n\nSource: {s.source_domain or '—'}\n\n{_snip(str(summary), 300)}",
+             f"{s.signal_type}\n\nSource: {s.source_domain or '—'}\n\n{_snip(payload_lines, 700)}",
              ts=_iso(s.emitted_at))
         if project_name:
             project_name_links.append((f"signal:{s.id}", _norm(project_name)))
@@ -311,7 +333,8 @@ def memory_graph(
         lessons, "lesson-iq",
         lambda f: _snip(f.lesson, 40),
         lambda f: f"{f.lesson}\n\nCategory: {f.category or '—'} · Impact: {f.impact_level or '—'}\n"
-                  f"Recommendation: {_snip(f.recommendation, 200)}\n[confidence: {f.confidence}]",
+                  f"Recommendation: {_snip(f.recommendation, 500)}\n"
+                  f"Evidence: {_snip(f.evidence, 300)}\n[confidence: {f.confidence}]",
     )
     _fact_twigs(
         assets, "asset-iq",

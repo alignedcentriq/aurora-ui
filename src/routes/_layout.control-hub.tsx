@@ -295,7 +295,7 @@ const TABS: TabItem[] = [
   },
   {
     id: "te-lms",
-    label: "TechElevate LMS",
+    label: "TechElevate",
     category: "Management Portals",
     icon: GraduationCap,
     color: "#7C3AED",
@@ -394,7 +394,7 @@ const TAB_DESCRIPTIONS: Record<TabId, string> = {
   "connector-studio":
     "Import OpenAPI specs, configure auth, test operations, and publish connectors for zero-code integrations.",
   "te-lms":
-    "In-house LMS: browse trainings, assign them, and take assessments that earn verified skills.",
+    "Real TechElevate integration: browse trainings, manage assignments, and track your exam status. Exams are sat on the TechElevate portal.",
   "udemy-business":
     "Browse the company's Udemy Business course catalog and track learner activity.",
 };

@@ -1,14 +1,22 @@
 """Robust JSON extraction for small-model drafting endpoints.
 
-Local models (llama3.1:8b on the shared tier) intermittently wrap JSON in ``` fences, prepend
-chatter, emit a trailing comma, or truncate — so a single invoke + naive ``json.loads`` fails
-at random. ``invoke_json`` retries a couple of times and parses tolerantly (fence-strip,
-balanced-brace slice, trailing-comma repair) before giving up. Used by the URL Library and Form
-Library /generate endpoints.
+Small/fast models intermittently wrap JSON in ``` fences, prepend chatter, emit a
+trailing comma, or truncate — so a single invoke + naive ``json.loads`` fails at
+random. ``invoke_json`` retries a couple of times and parses tolerantly (fence-strip,
+balanced-brace slice, trailing-comma repair) before giving up. Used by the URL Library,
+Form Library, and TechElevate /generate endpoints.
+
+Goes through ``resilient_invoke`` (not a bare ``ChatOpenAI.invoke``) so a bad/stale
+model configured on the tier automatically falls over to the tier's fallback model
+instead of hard-failing every draft request — the same protection the agent/service/
+router tiers already get.
 """
 
 import json
+import logging
 import re
+
+log = logging.getLogger(__name__)
 
 
 def _strip_trailing_commas(s: str) -> str:
@@ -65,17 +73,25 @@ def extract_json(raw: str) -> dict | None:
     return _try_load(s[start:])
 
 
-def invoke_json(model, prompt: str, attempts: int = 2) -> dict | None:
-    """Invoke ``model`` up to ``attempts`` times, returning the first parseable JSON object,
-    or None if every attempt fails (model error or unparseable output). Kept low by default
-    because each call on the shared tier costs ~20s+."""
-    for _ in range(max(1, attempts)):
+def invoke_json(tier: str, prompt: str, attempts: int = 2, *,
+                 default_timeout: float | None = None,
+                 default_max_tokens: int | None = None) -> dict | None:
+    """Invoke ``tier`` (via resilient_invoke, so a bad primary model falls back
+    automatically) up to ``attempts`` times, returning the first parseable JSON
+    object, or None if every attempt fails (model error or unparseable output).
+    Kept low by default because each call on the shared tier costs ~20s+."""
+    from app.services.llm_resilience import resilient_invoke
+
+    for attempt in range(max(1, attempts)):
         try:
-            resp = model.invoke(prompt)
+            resp = resilient_invoke(tier, prompt, default_timeout=default_timeout,
+                                     default_max_tokens=default_max_tokens)
             raw = (resp.content or "").strip()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            log.warning("invoke_json attempt %d/%d raised: %s", attempt + 1, attempts, exc)
             continue
         obj = extract_json(raw)
         if obj is not None:
             return obj
+        log.warning("invoke_json attempt %d/%d returned unparseable output: %r", attempt + 1, attempts, raw[:300])
     return None

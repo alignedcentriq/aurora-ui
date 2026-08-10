@@ -17,6 +17,8 @@ import {
   Plus,
   ChevronLeft,
   ChevronRight,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -240,12 +242,16 @@ function ProjectsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(EMPTY_PROJECT_FORM);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   const [detailProject, setDetailProject] = useState<ProjectRow | null>(null);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [memberForm, setMemberForm] = useState(EMPTY_MEMBER_FORM);
   const [addingMember, setAddingMember] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState<ProjectRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetch_ = useCallback(async () => {
     setLoading(true);
@@ -275,27 +281,62 @@ function ProjectsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
     setCurrentPage(1);
   }, [rows.length, pageSize]);
 
-  const createProject = async () => {
+  const openCreateDialog = () => {
+    setEditingId(null);
+    setForm(EMPTY_PROJECT_FORM);
+    setDialogOpen(true);
+  };
+
+  const openEditDialog = (r: ProjectRow) => {
+    setEditingId(r.id);
+    setForm({ name: r.name, status: r.status, owner: r.owner ?? "" });
+    setDialogOpen(true);
+  };
+
+  const saveProject = async () => {
     if (!form.name.trim()) {
       toast.error("Project name is required");
       return;
     }
     setSaving(true);
     try {
-      const res = await fetch(`/api/pmo/projects`, {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify(form),
-      });
+      const res = await fetch(
+        editingId != null ? `/api/pmo/projects/${editingId}` : `/api/pmo/projects`,
+        {
+          method: editingId != null ? "PUT" : "POST",
+          headers: authHeaders,
+          body: JSON.stringify(form),
+        },
+      );
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
-      flyBanner(`Project "${form.name}" created`);
+      flyBanner(editingId != null ? `Project "${form.name}" updated` : `Project "${form.name}" created`);
       setDialogOpen(false);
+      setEditingId(null);
       setForm(EMPTY_PROJECT_FORM);
       fetch_();
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Failed to create project");
+      toast.error(e instanceof Error ? e.message : "Failed to save project");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const deleteProject = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/pmo/projects/${deleteTarget.id}`, {
+        method: "DELETE",
+        headers: authHeaders,
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Failed");
+      flyBanner(`Project "${deleteTarget.name}" deleted`);
+      setDeleteTarget(null);
+      fetch_();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Failed to delete project");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -384,7 +425,7 @@ function ProjectsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
             Refresh
           </button>
           <button
-            onClick={() => setDialogOpen(true)}
+            onClick={openCreateDialog}
             className="flex items-center gap-1.5 text-[12px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm cursor-pointer"
           >
             <Plus className="h-3 w-3" />
@@ -423,6 +464,9 @@ function ProjectsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
                   </TableHead>
                   <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80 text-center">
                     Team Size
+                  </TableHead>
+                  <TableHead className="py-4 px-6 text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground/80 text-center">
+                    Actions
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -472,6 +516,34 @@ function ProjectsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
                     </TableCell>
                     <TableCell className="py-4 px-6 text-center text-muted-foreground">
                       {r.team_size ?? "—"}
+                    </TableCell>
+                    <TableCell className="py-4 px-6 text-center">
+                      {r.id > 0 ? (
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditDialog(r);
+                            }}
+                            title="Edit project"
+                            className="p-1.5 rounded-lg text-muted-foreground hover:text-indigo-600 hover:bg-indigo-500/10 transition-colors cursor-pointer"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteTarget(r);
+                            }}
+                            title="Delete project"
+                            className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground/40 text-xs" title="Derived from live staffing data — no editable record">—</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -545,7 +617,7 @@ function ProjectsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
         </div>
       )}
 
-      {/* Create Project Dialog */}
+      {/* Create / Edit Project Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-3xl shadow-xl">
           <DialogHeader>
@@ -553,7 +625,7 @@ function ProjectsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
               <div className="h-8 w-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
                 <FolderKanban className="h-4.5 w-4.5" />
               </div>
-              New Project
+              {editingId != null ? "Edit Project" : "New Project"}
             </DialogTitle>
           </DialogHeader>
 
@@ -604,11 +676,47 @@ function ProjectsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
             <Button
               size="sm"
               disabled={!form.name.trim() || saving}
-              onClick={createProject}
+              onClick={saveProject}
               className="rounded-xl font-semibold bg-indigo-600 hover:bg-indigo-700 text-white border-0 shadow-md shadow-indigo-500/10"
             >
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
-              Create Project
+              {editingId != null ? "Save Changes" : "Create Project"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent className="max-w-sm bg-white dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 rounded-3xl shadow-xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-foreground flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-rose-500/10 text-rose-500 flex items-center justify-center">
+                <Trash2 className="h-4.5 w-4.5" />
+              </div>
+              Delete Project
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground py-2">
+            Are you sure you want to delete <span className="font-semibold text-foreground">{deleteTarget?.name}</span>? This cannot be undone.
+          </p>
+          <DialogFooter className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteTarget(null)}
+              className="rounded-xl font-semibold border-slate-200 dark:border-zinc-800"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={deleting}
+              onClick={deleteProject}
+              className="rounded-xl font-semibold bg-rose-600 hover:bg-rose-700 text-white border-0 shadow-md shadow-rose-500/10"
+            >
+              {deleting && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>
