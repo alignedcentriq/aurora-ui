@@ -81,3 +81,7 @@ backend/mcp_server/sessions/
 /test-results/
 /playwright-report/
 /playwright/.cache/
+
+# Memory Vault — generated Obsidian export of Memory Brain (regenerated on every
+# sync, contains PII-adjacent redacted user facts/feedback — never commit)
+/memory_vault/

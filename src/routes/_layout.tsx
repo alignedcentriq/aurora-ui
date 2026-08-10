@@ -27,6 +27,8 @@ import {
   Rocket,
   UsersRound,
   RotateCcw,
+  CalendarDays,
+  Bot,
 } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -47,6 +49,12 @@ import { useIntroStore } from "@/lib/intro-store";
 import { setChatSyncUser, hydrateChatFromServer } from "@/lib/chat-sync";
 import { useAuth } from "@/lib/auth-store";
 import { SittingBuddy } from "@/components/assistant/GreetingBot";
+import { useHumanoidStore } from "@/lib/humanoid-store";
+import { lazy, Suspense } from "react";
+
+const HumanoidOverlay = lazy(() =>
+  import("@/components/assistant/HumanoidOverlay").then((m) => ({ default: m.HumanoidOverlay })),
+);
 import { cn } from "@/lib/utils";
 import {
   AlertDialog,
@@ -65,7 +73,6 @@ export const Route = createFileRoute("/_layout")({
 
 let isInitialAppLoad = true;
 
-
 const NAV_COLORS: Record<string, string> = {
   "/": "var(--clarity)",
   "/onboarding": "var(--collaboration)",
@@ -79,13 +86,7 @@ const NAV_COLORS: Record<string, string> = {
 };
 
 // --- Timezone Clock Card Component with Parallax Hover ---
-function TimezoneOrbitClockCard({
-  country,
-  onRemove,
-}: {
-  country: any;
-  onRemove?: () => void;
-}) {
+function TimezoneOrbitClockCard({ country, onRemove }: { country: any; onRemove?: () => void }) {
   const [tilt, setTilt] = useState({ rotateX: 0, rotateY: 0, scale: 1 });
   const [timeData, setTimeData] = useState({
     timeStr: "",
@@ -313,6 +314,7 @@ function LayoutComponent() {
   const addClock = useSettings((s) => s.addClock);
   const removeClock = useSettings((s) => s.removeClock);
   const resetClocks = useSettings((s) => s.resetClocks);
+  const { humanoidActive, setHumanoidActive } = useHumanoidStore();
   const openIntro = useIntroStore((s) => s.open);
   // Intro tour play button is restricted to the app owner only.
   const canWatchIntro = (user?.email ?? "").toLowerCase() === "shivam.sharma@alignedautomation.com";
@@ -323,6 +325,26 @@ function LayoutComponent() {
   const [clockPickerOpen, setClockPickerOpen] = useState(false);
   const [clockSearch, setClockSearch] = useState("");
   const [copilotOpen, setCopilotOpen] = useState(false);
+
+  const [rightRailOpen, setRightRailOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("centriq-home-rail-open") === "1";
+    }
+    return false;
+  });
+
+  const toggleRightRail = () => {
+    window.dispatchEvent(new CustomEvent("centriq-toggle-right-rail"));
+  };
+
+  useEffect(() => {
+    const handleState = (e: Event) => {
+      const customEvent = e as CustomEvent<{ open: boolean }>;
+      setRightRailOpen(customEvent.detail.open);
+    };
+    window.addEventListener("centriq-right-rail-state", handleState);
+    return () => window.removeEventListener("centriq-right-rail-state", handleState);
+  }, []);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [userWantsCollapsed, setUserWantsCollapsed] = useState(false);
@@ -514,6 +536,28 @@ function LayoutComponent() {
       </div>
     );
 
+  const headerAvatarEl =
+    user.avatarUrl && !avatarError ? (
+      <img
+        src={user.avatarUrl}
+        alt={user.name}
+        onError={() => setAvatarError(true)}
+        className="h-8 w-8 rounded-full object-cover shrink-0 ring-2 ring-primary/20"
+      />
+    ) : (
+      <div
+        className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-black text-white shrink-0"
+        style={{
+          background: "var(--gradient-primary)",
+        }}
+      >
+        {user.name
+          .split(" ")
+          .map((n) => n[0]?.toUpperCase() ?? "")
+          .join("")}
+      </div>
+    );
+
   const showCopilot =
     location.pathname !== "/" &&
     location.pathname !== "/settings" &&
@@ -531,15 +575,26 @@ function LayoutComponent() {
       <aside
         className={cn(
           "hidden lg:flex flex-col h-full bg-[#090f21] border-r border-blue-950/60 backdrop-blur-xl shrink-0 transition-all duration-300 relative select-none z-30",
-          sidebarCollapsed ? "w-[78px]" : "w-[260px]"
+          sidebarCollapsed ? "w-[78px]" : "w-[260px]",
         )}
       >
         {/* Brand Header */}
-        <div className={cn("flex items-center py-5 h-16 border-b border-blue-950/60 shrink-0 gap-2.5", sidebarCollapsed ? "justify-center px-0" : "px-4")}>
-          <Link to="/" className="flex items-center gap-2 hover:opacity-95 transition-opacity overflow-hidden">
+        <div
+          className={cn(
+            "flex items-center py-5 h-16 border-b border-blue-950/60 shrink-0 gap-2.5",
+            sidebarCollapsed ? "justify-center px-0" : "px-4",
+          )}
+        >
+          <Link
+            to="/"
+            className="flex items-center gap-2 hover:opacity-95 transition-opacity overflow-hidden"
+          >
             <Logo size="sm" className="shrink-0" />
             {!sidebarCollapsed && (
-              <BrandName className="text-sm font-bold tracking-tight text-white whitespace-nowrap" withAI={true} />
+              <BrandName
+                className="text-sm font-bold tracking-tight text-white whitespace-nowrap"
+                withAI={true}
+              />
             )}
           </Link>
         </div>
@@ -565,9 +620,7 @@ function LayoutComponent() {
                     className={cn(
                       "relative flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap z-10",
                       sidebarCollapsed ? "justify-center" : "justify-start",
-                      active
-                        ? "font-bold text-white"
-                        : "text-zinc-400 hover:text-white",
+                      active ? "font-bold text-white" : "text-zinc-400 hover:text-white",
                     )}
                     style={{
                       color: active ? accentColor : undefined,
@@ -617,7 +670,9 @@ function LayoutComponent() {
                       />
                     </motion.div>
                     {!sidebarCollapsed && (
-                      <TextRoll className="text-xs font-semibold normal-case">{item.label}</TextRoll>
+                      <TextRoll className="text-xs font-semibold normal-case">
+                        {item.label}
+                      </TextRoll>
                     )}
                   </Link>
                 );
@@ -659,7 +714,9 @@ function LayoutComponent() {
                     .map((t) => {
                       const firstUserMsg = (t.turns ?? []).find((x) => x.role === "user")?.text;
                       const chatTitle = firstUserMsg
-                        ? firstUserMsg.length > 32 ? firstUserMsg.slice(0, 32) + "…" : firstUserMsg
+                        ? firstUserMsg.length > 32
+                          ? firstUserMsg.slice(0, 32) + "…"
+                          : firstUserMsg
                         : "New conversation";
                       const isActiveChat = activeId === t.id && location.pathname === "/";
                       return (
@@ -669,17 +726,27 @@ function LayoutComponent() {
                             "group relative flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-all",
                             isActiveChat
                               ? "bg-primary/12 text-white"
-                              : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-200"
+                              : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-200",
                           )}
                           onClick={() => {
                             setActiveId(t.id);
                             if (location.pathname !== "/") navigate({ to: "/" });
                           }}
                         >
-                          <MessageSquare className={cn("h-3 w-3 shrink-0", isActiveChat ? "text-primary" : "text-zinc-600")} />
-                          <span className="truncate flex-1 text-[11px] font-medium pr-4">{chatTitle}</span>
+                          <MessageSquare
+                            className={cn(
+                              "h-3 w-3 shrink-0",
+                              isActiveChat ? "text-primary" : "text-zinc-600",
+                            )}
+                          />
+                          <span className="truncate flex-1 text-[11px] font-medium pr-4">
+                            {chatTitle}
+                          </span>
                           <button
-                            onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(t.id);
+                            }}
                             className="absolute right-1.5 opacity-0 group-hover:opacity-100 flex h-4.5 w-4.5 items-center justify-center rounded text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all cursor-pointer"
                             title="Delete"
                             aria-label="Delete"
@@ -693,7 +760,6 @@ function LayoutComponent() {
               </div>
             </div>
           )}
-
         </nav>
 
         {/* Collapse/Expand Toggle — outside scrollable nav so it's always visible */}
@@ -703,7 +769,7 @@ function LayoutComponent() {
             className={cn(
               "w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer whitespace-nowrap",
               sidebarCollapsed ? "justify-center" : "justify-start",
-              "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/40"
+              "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/40",
             )}
             title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
             aria-label={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
@@ -794,72 +860,6 @@ function LayoutComponent() {
               </button>
             </div>
           )}
-
-          {/* Profile Switcher Dropdown inside Sidebar */}
-          <div className="relative" ref={profileDropdownRef}>
-            <button
-              onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
-              className={cn(
-                "flex w-full items-center rounded-xl border border-blue-950 bg-[#0c1630]/35 hover:bg-[#0c1630]/60 p-1.5 transition-all text-xs font-medium text-white cursor-pointer shadow-sm",
-                sidebarCollapsed ? "justify-center pr-1.5" : "justify-between pr-3"
-              )}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                {avatarEl}
-                {!sidebarCollapsed && (
-                  <div className="text-left min-w-0">
-                    <div className="font-bold text-white truncate max-w-[120px]">{user.name}</div>
-                    <div className="text-[10px] text-zinc-400 truncate max-w-[120px]">{user.role}</div>
-                  </div>
-                )}
-              </div>
-              {!sidebarCollapsed && (
-                <ChevronDown
-                  className={cn(
-                    "h-3.5 w-3.5 text-zinc-400 opacity-55 transition-transform duration-200 shrink-0",
-                    profileDropdownOpen && "rotate-180"
-                  )}
-                />
-              )}
-            </button>
-
-            <AnimatePresence>
-              {profileDropdownOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 8, scale: 0.97 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 8, scale: 0.97 }}
-                  transition={{ duration: 0.13, ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute bottom-full left-0 mb-2 z-[100] rounded-xl border border-zinc-700/60 bg-[#0d1628] p-1.5 shadow-2xl"
-                  style={{ minWidth: "220px", width: "220px" }}
-                >
-                  {/* User identity header */}
-                  <div className="px-2.5 py-2 mb-1 flex items-center gap-2.5">
-                    <div className="shrink-0">{avatarEl}</div>
-                    <div className="min-w-0">
-                      <div className="text-[11px] font-bold text-white truncate">{user.name}</div>
-                      <div className="text-[10px] text-zinc-400 truncate">{user.role}</div>
-                    </div>
-                  </div>
-
-                  <RoleSwitcher />
-
-                  <div className="border-t border-zinc-700/50 mt-1.5 pt-1.5">
-                    <button
-                      onClick={() => {
-                        logout();
-                        setProfileDropdownOpen(false);
-                      }}
-                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-all text-left cursor-pointer"
-                    >
-                      <LogOut className="h-3.5 w-3.5 shrink-0" />
-                      <span>Sign Out</span>
-                    </button>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
         </div>
       </aside>
 
@@ -885,9 +885,16 @@ function LayoutComponent() {
             >
               {/* Drawer Header */}
               <div className="flex items-center justify-between mb-6 px-2 shrink-0">
-                <Link to="/" className="flex items-center gap-2" onClick={() => setMobileMenuOpen(false)}>
+                <Link
+                  to="/"
+                  className="flex items-center gap-2"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
                   <Logo size="sm" />
-                  <BrandName className="text-sm font-bold tracking-tight text-white" withAI={true} />
+                  <BrandName
+                    className="text-sm font-bold tracking-tight text-white"
+                    withAI={true}
+                  />
                 </Link>
                 <button
                   onClick={() => setMobileMenuOpen(false)}
@@ -975,7 +982,9 @@ function LayoutComponent() {
                       .map((t) => {
                         const firstUserMsg = (t.turns ?? []).find((x) => x.role === "user")?.text;
                         const chatTitle = firstUserMsg
-                          ? firstUserMsg.length > 32 ? firstUserMsg.slice(0, 32) + "…" : firstUserMsg
+                          ? firstUserMsg.length > 32
+                            ? firstUserMsg.slice(0, 32) + "…"
+                            : firstUserMsg
                           : "New conversation";
                         const isActiveChat = activeId === t.id && location.pathname === "/";
                         return (
@@ -985,7 +994,7 @@ function LayoutComponent() {
                               "group relative flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-all",
                               isActiveChat
                                 ? "bg-primary/12 text-white"
-                                : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-200"
+                                : "text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-200",
                             )}
                             onClick={() => {
                               setActiveId(t.id);
@@ -993,10 +1002,20 @@ function LayoutComponent() {
                               setMobileMenuOpen(false);
                             }}
                           >
-                            <MessageSquare className={cn("h-3 w-3 shrink-0", isActiveChat ? "text-primary" : "text-zinc-600")} />
-                            <span className="truncate flex-1 text-[11px] font-medium pr-4">{chatTitle}</span>
+                            <MessageSquare
+                              className={cn(
+                                "h-3 w-3 shrink-0",
+                                isActiveChat ? "text-primary" : "text-zinc-600",
+                              )}
+                            />
+                            <span className="truncate flex-1 text-[11px] font-medium pr-4">
+                              {chatTitle}
+                            </span>
                             <button
-                              onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDelete(t.id);
+                              }}
                               className="absolute right-1.5 opacity-0 group-hover:opacity-100 flex h-4.5 w-4.5 items-center justify-center rounded text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all cursor-pointer"
                               title="Delete"
                               aria-label="Delete"
@@ -1079,7 +1098,6 @@ function LayoutComponent() {
         )}
       </AnimatePresence>
 
-
       {/* --- RIGHT SIDE CONTENT AREA --- */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative">
         {/* --- WORKSPACE TOP BAR (all screen sizes) --- */}
@@ -1088,7 +1106,9 @@ function LayoutComponent() {
         <header
           className={cn(
             "h-14 sm:h-16 flex items-center justify-between gap-2 px-3 sm:px-6 backdrop-blur-xl z-20 shrink-0 select-none",
-            isHome ? "border-b border-white/10 bg-[#090f21]/90" : "border-b border-border bg-background/90",
+            isHome
+              ? "border-b border-white/10 bg-[#090f21]/90"
+              : "border-b border-border bg-background/90",
           )}
         >
           {/* Left: Hamburger (mobile) + Logo/Brand (mobile only) */}
@@ -1106,17 +1126,23 @@ function LayoutComponent() {
             >
               <Menu className="h-5 w-5" />
             </button>
-            <Link to="/" className="flex lg:hidden items-center gap-2 hover:opacity-95 transition-opacity">
+            <Link
+              to="/"
+              className="flex lg:hidden items-center gap-2 hover:opacity-95 transition-opacity"
+            >
               <Logo size="sm" />
               <BrandName
-                className={cn("text-sm font-bold tracking-tight", isHome ? "text-white" : "text-foreground")}
+                className={cn(
+                  "text-sm font-bold tracking-tight",
+                  isHome ? "text-white" : "text-foreground",
+                )}
                 withAI={true}
               />
             </Link>
           </div>
 
-          {/* Right: bell icons */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Right: bell icons & profile */}
+          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             <ProactiveNudgeFeed
               triggerClassName={cn(
                 "rounded-full",
@@ -1133,6 +1159,97 @@ function LayoutComponent() {
                   : "border-border bg-muted/40 hover:bg-muted/70 text-foreground",
               )}
             />
+
+            {/* Humanoid Mode Toggle Button */}
+            <button
+              onClick={() => setHumanoidActive(!humanoidActive)}
+              className={cn(
+                "rounded-full h-9 w-9 flex items-center justify-center border transition-all cursor-pointer shadow-sm relative group",
+                humanoidActive
+                  ? "border-cyan-500 bg-cyan-500/10 text-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.3)] animate-pulse"
+                  : isHome
+                    ? "border-white/10 bg-white/5 hover:bg-white/10 text-white"
+                    : "border-border bg-muted/40 hover:bg-muted/70 text-foreground",
+              )}
+              title={humanoidActive ? "Disable Humanoid Mode" : "Enable Humanoid Mode"}
+              aria-label="Toggle Humanoid Mode"
+            >
+              <Bot
+                className={cn("h-4.5 w-4.5 transition-transform", humanoidActive && "scale-110")}
+              />
+              {humanoidActive && (
+                <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+                </span>
+              )}
+            </button>
+
+            {/* Today's Dashboard (Right Rail) Toggle Button */}
+            {isHome && (
+              <button
+                onClick={toggleRightRail}
+                className={cn(
+                  "rounded-full h-9 w-9 flex items-center justify-center border transition-all cursor-pointer shadow-sm",
+                  rightRailOpen
+                    ? "border-primary/45 bg-primary/10 text-primary shadow-[0_0_12px_rgba(99,102,241,0.2)]"
+                    : "border-white/10 bg-white/5 hover:bg-white/10 text-white",
+                )}
+                title={rightRailOpen ? "Hide today's dashboard" : "Show today's dashboard"}
+                aria-label="Toggle Dashboard"
+              >
+                <CalendarDays className="h-4.5 w-4.5" />
+              </button>
+            )}
+
+            {/* Profile Dropdown */}
+            <div className="relative ml-1" ref={profileDropdownRef}>
+              <button
+                onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
+                className="flex items-center justify-center rounded-full hover:opacity-85 transition-opacity cursor-pointer shrink-0 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                title="Profile Settings"
+                aria-label="Profile Settings"
+              >
+                {headerAvatarEl}
+              </button>
+
+              <AnimatePresence>
+                {profileDropdownOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.97 }}
+                    transition={{ duration: 0.13, ease: [0.16, 1, 0.3, 1] }}
+                    className="absolute right-0 top-full mt-2.5 z-[100] rounded-xl border border-zinc-700/60 bg-[#0d1628] p-1.5 shadow-2xl"
+                    style={{ minWidth: "220px", width: "220px" }}
+                  >
+                    {/* User identity header */}
+                    <div className="px-2.5 py-2 mb-1 flex items-center gap-2.5">
+                      <div className="shrink-0">{headerAvatarEl}</div>
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-bold text-white truncate">{user.name}</div>
+                        <div className="text-[10px] text-zinc-400 truncate">{user.role}</div>
+                      </div>
+                    </div>
+
+                    <RoleSwitcher />
+
+                    <div className="border-t border-zinc-700/50 mt-1.5 pt-1.5">
+                      <button
+                        onClick={() => {
+                          logout();
+                          setProfileDropdownOpen(false);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-all text-left cursor-pointer"
+                      >
+                        <LogOut className="h-3.5 w-3.5 shrink-0" />
+                        <span>Sign Out</span>
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </header>
 
@@ -1253,7 +1370,9 @@ function LayoutComponent() {
                         if (matches.length === 0) {
                           return (
                             <p className="text-center text-xs text-muted-foreground py-4">
-                              {q ? "No matching timezone found." : "All popular clocks are already pinned."}
+                              {q
+                                ? "No matching timezone found."
+                                : "All popular clocks are already pinned."}
                             </p>
                           );
                         }
@@ -1302,8 +1421,9 @@ function LayoutComponent() {
               {/* Clocks Grid */}
               {worldClocks.length === 0 ? (
                 <p className="text-center text-sm text-muted-foreground py-10">
-                  No clocks pinned. Use <span className="font-semibold text-foreground">Add clock</span> to
-                  pin any timezone in the world.
+                  No clocks pinned. Use{" "}
+                  <span className="font-semibold text-foreground">Add clock</span> to pin any
+                  timezone in the world.
                 </p>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 md:gap-5 mt-4">
@@ -1368,6 +1488,13 @@ function LayoutComponent() {
 
       {/* --- GLOBAL EMAIL AUTOMATION DRAWER --- */}
       <EmailAutomationDrawer />
+
+      {/* --- IMMERSIVE 3D HUMANOID OVERLAY --- */}
+      {humanoidActive && (
+        <Suspense fallback={null}>
+          <HumanoidOverlay />
+        </Suspense>
+      )}
     </div>
   );
 }

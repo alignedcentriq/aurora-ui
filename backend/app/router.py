@@ -58,7 +58,12 @@ DOMAIN_REGISTRY = {
                        "any issue with a computer, machine, device, workstation, or IT equipment, "
                        "requesting software licenses (Claude, GitHub Copilot, Loveable), "
                        "requesting hardware peripherals (monitor, mouse, keyboard, headset, headphones), "
-                       "checking what licenses or assets are assigned to me",
+                       "checking what licenses or assets are assigned to me, "
+                       "Azure DevOps — creating a new Azure DevOps project/organization, "
+                       "registering an application in Azure AD / Entra ID (app registrations), "
+                       "requesting API permissions / scopes / consent for an Azure AD app, "
+                       "requesting data export or access to any internal system or application "
+                       "(NOT Udemy/Coursera licenses — those go to pmo)",
         "status": "active",
     },
     "pmo": {
@@ -253,8 +258,13 @@ EXAMPLES:
 
 def _router_build(llm):
     """Adapt the bare router model for structured output — passed to the resilient
-    wrappers so the breaker/fallback path gets the same RouterOutput schema."""
-    return llm.with_structured_output(RouterOutput)
+    wrappers so the breaker/fallback path gets the same RouterOutput schema.
+
+    method="function_calling": Groq's OpenAI-compatible API only supports the default
+    "json_schema" structured-output mode on a handful of models (and even those reject
+    this schema's shape) — tool-calling based structured output works everywhere. See
+    GROQ_TOOL_CAPABLE_MODELS in llm_controls_service.py."""
+    return llm.with_structured_output(RouterOutput, method="function_calling")
 
 
 def _hint_suffix(candidate_domains: list[str] | None) -> str:

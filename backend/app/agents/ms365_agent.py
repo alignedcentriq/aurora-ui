@@ -292,7 +292,11 @@ async def check_room_availability(
             words = [w for w in rn.split() if len(w) > 2]
             filtered = [r for r in all_rooms if any(w in (r.get("name") or "").lower() for w in words)]
         if not filtered:
-            return json.dumps({"success": False, "error": f"Room '{room_name}' not found. Use list_meeting_rooms to see available rooms."})
+            from app.services.fuzzy_match import best_fuzzy_match
+            best = best_fuzzy_match(room_name, [r.get("name") or "" for r in all_rooms])
+            error = (f"Room '{room_name}' not found. Did you mean **{best}**?" if best
+                     else f"Room '{room_name}' not found. Use list_meeting_rooms to see available rooms.")
+            return json.dumps({"success": False, "error": error})
         all_rooms = filtered
 
     room_emails = [r["email"] for r in all_rooms if r.get("email")]
@@ -341,7 +345,11 @@ async def book_meeting_room(
 
     match = _find_room(rooms_result["rooms"], room_name)
     if not match or not match.get("email"):
-        return json.dumps({"success": False, "error": f"Room '{room_name}' not found or has no booking email. Use list_meeting_rooms to see available rooms."})
+        from app.services.fuzzy_match import best_fuzzy_match
+        best = best_fuzzy_match(room_name, [r.get("name") or "" for r in rooms_result["rooms"]])
+        error = (f"Room '{room_name}' not found. Did you mean **{best}**?" if best
+                 else f"Room '{room_name}' not found or has no booking email. Use list_meeting_rooms to see available rooms.")
+        return json.dumps({"success": False, "error": error})
 
     start = f"{date}T{start_time}:00"
     end   = f"{date}T{end_time}:00"

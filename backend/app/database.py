@@ -617,9 +617,14 @@ def init_db():
         except Exception as e:
             pass
 
-        # Background thread: seed the local TechElevate LMS (8 trainings + a spread of
-        # assignments/completions) so the learning flywheel + analytics show live data.
-        # Idempotent and self-contained; no-ops when TECHELEVATE_LOCAL is off.
+        # Background thread: seed the local TechElevate catalog (8 trainings + a spread of
+        # assignments/completions). This is now a SECONDARY data source — the TechElevate tab
+        # itself and self-scoped PMO tools (recommend_training, get_my_trainings) read the real
+        # TechElevate API — but bench_upskill_service, team_readiness_service, manager team
+        # dashboards, smart_generators, and analytics_builder_service still depend on this local
+        # catalog for cross-employee views the real API can't serve without an admin-scoped
+        # token (no service account is available in this environment). Idempotent; no-ops when
+        # TECHELEVATE_LOCAL is off.
         try:
             from app.config import settings as _s
             if getattr(_s, "TECHELEVATE_LOCAL", False):
@@ -677,6 +682,16 @@ def init_db():
                 threading.Thread(target=parking_reminder_loop, daemon=True).start()
             else:
                 pass
+        except Exception as e:
+            pass
+
+        # Background thread: regenerates the Memory Vault (Obsidian export of Memory
+        # Brain's learning flywheel) so it stays current without a manual trigger
+        try:
+            from app.config import settings as _s
+            if getattr(_s, "MEMORY_VAULT_ENABLED", True):
+                from app.services.memory_vault_service import memory_vault_sync_loop
+                threading.Thread(target=memory_vault_sync_loop, daemon=True).start()
         except Exception as e:
             pass
 

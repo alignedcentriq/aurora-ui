@@ -4,7 +4,7 @@ Single source of truth for the settings IT can change at runtime without a resta
 
   * chat_enabled       — global kill switch for all AI chat
   * disabled_domains   — turn off individual domain agents (hr/admin/it_support/…)
-  * max_concurrency    — GPU load throttle (cap on simultaneous generations)
+  * max_concurrency    — concurrency throttle (cap on simultaneous generations sent to Groq)
   * max_queue          — bounded wait queue size
   * tiers              — per-tier model params (model, temperature, max_tokens, timeout)
 
@@ -44,8 +44,9 @@ DISABLEABLE_DOMAINS = ["hr", "admin", "it_support", "pmo", "ms365", "functional_
 
 VALID_TIERS = ("agent", "service", "router", "general", "summarizer")
 
-# What Ollama capabilities each tier requires.  "tools" means the model must support
-# bind_tools() / with_structured_output() — without it the tier will error at runtime.
+# What tool-calling capability each tier requires from its Groq model. "tools" means
+# the model must support bind_tools() / with_structured_output() — without it the
+# tier will error at runtime.
 TIER_REQUIREMENTS: dict[str, list[str]] = {
     "agent":      ["tools"],   # HR/MS365 reasoning — bind_tools()
     "service":    ["tools"],   # Admin/IT/PMO/Manager — bind_tools()
@@ -81,6 +82,22 @@ BOUNDS = {
 SR_MODES = ("live", "off")
 
 
+# Groq chat-capable models known to support tool calling (bind_tools /
+# with_structured_output). Excludes audio (whisper-*), TTS (canopylabs/*), and
+# classifier-only models (meta-llama/llama-prompt-guard-*) — those can't serve any
+# of our five tiers. Kept in sync manually; Groq's catalog moves faster than any
+# capability-introspection endpoint they expose.
+GROQ_TOOL_CAPABLE_MODELS = {
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.6-27b",
+    "groq/compound",
+    "groq/compound-mini",
+}
+
+
 def known_models() -> list[str]:
     """Static fallback allow-list (the models this app is known to use). Used when
     the live server list can't be reached, so a model change is never validated
@@ -91,54 +108,47 @@ def known_models() -> list[str]:
         settings.FAST_MODEL_NAME,
         settings.GENERAL_MODEL_NAME,
         settings.SUMMARIZER_MODEL_NAME,
-        "gpt-oss:latest",
-        "llama3.2:3b",
-        "llama3.1:8b",
+        *GROQ_TOOL_CAPABLE_MODELS,
     }
     return sorted(c for c in candidates if c)
 
 
-# ── live model availability (Ollama /api/tags) ─────────────────────────────────
+# ── live model availability (Groq GET /v1/models) ──────────────────────────────
 # Changing a tier's model is the one genuinely dangerous knob: pointing a tier at a
-# model that isn't pulled on the server breaks every request in that tier. So we
-# validate the chosen model against what the server actually has loaded, and only
-# fall back to the static allow-list if the server can't be reached.
+# model Groq doesn't serve breaks every request in that tier. So we validate the
+# chosen model against what the account can actually see, and only fall back to the
+# static allow-list if the API can't be reached.
 _models_cache: tuple[float, Optional[list[str]]] = (0.0, None)
 _MODELS_TTL = 60.0
 
 
-def _tags_url() -> str:
-    root = settings.AGENT_BASE_URL.rstrip("/")
-    if root.endswith("/v1"):
-        root = root[:-3]
-    return root.rstrip("/") + "/api/tags"
+def _models_url() -> str:
+    return settings.AGENT_BASE_URL.rstrip("/") + "/models"
 
 
 def available_models() -> Optional[list[str]]:
-    """Models currently pulled on the Ollama server, or None if it can't be reached.
-    Cached for ``_MODELS_TTL`` seconds."""
+    """Models Groq currently serves for this account, or None if unreachable
+    (no API key configured, network error, etc). Cached for ``_MODELS_TTL`` seconds."""
     global _models_cache
     now = time.time()
     if _models_cache[1] is not None and (now - _models_cache[0]) < _MODELS_TTL:
         return _models_cache[1]
+    if not settings.AGENT_API_KEY:
+        return None
     try:
-        import urllib.request
-        with urllib.request.urlopen(_tags_url(), timeout=3) as resp:  # noqa: S310 — internal host
-            data = json.loads(resp.read().decode("utf-8"))
-        names = sorted({m.get("name", "") for m in data.get("models", []) if m.get("name")})
+        import requests
+        resp = requests.get(
+            _models_url(), headers={"Authorization": f"Bearer {settings.AGENT_API_KEY}"},
+            timeout=5,
+        )
+        data = resp.json()
+        names = sorted({m.get("id", "") for m in data.get("data", []) if m.get("id")})
         if names:
             _models_cache = (now, names)
             return names
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         pass
     return None
-
-
-def _show_url() -> str:
-    root = settings.AGENT_BASE_URL.rstrip("/")
-    if root.endswith("/v1"):
-        root = root[:-3]
-    return root.rstrip("/") + "/api/show"
 
 
 _cap_cache: dict[str, tuple[float, dict]] = {}
@@ -146,133 +156,50 @@ _CAP_TTL = 300.0  # 5 minutes
 
 
 def model_capabilities(model_name: str) -> dict:
-    """Return Ollama-reported capabilities for a model via /api/show.
+    """Tool-calling support for ``model_name``. Groq has no per-model capability
+    endpoint, so this checks the curated GROQ_TOOL_CAPABLE_MODELS allow-list
+    instead of making a network call.
 
     Result: {model, capabilities: list[str], supports_tools: bool, error: str|None}
-    Cached 5 minutes per model name.  Always returns a valid dict (never raises).
     """
     now = time.time()
     cached = _cap_cache.get(model_name)
     if cached and (now - cached[0]) < _CAP_TTL:
         return cached[1]
 
-    result: dict = {"model": model_name, "capabilities": [], "supports_tools": False, "error": None}
-    try:
-        import urllib.request as _urlreq
-        body = json.dumps({"model": model_name}).encode()
-        req = _urlreq.Request(
-            _show_url(), data=body, method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        with _urlreq.urlopen(req, timeout=6) as resp:  # noqa: S310 — internal host
-            info = json.loads(resp.read().decode("utf-8"))
-        caps = info.get("capabilities") or []
-        result["capabilities"] = caps
-        result["supports_tools"] = "tools" in caps
-    except Exception as exc:  # noqa: BLE001
-        result["error"] = str(exc)
-
+    supports = model_name in GROQ_TOOL_CAPABLE_MODELS
+    result: dict = {
+        "model": model_name,
+        "capabilities": ["tools"] if supports else [],
+        "supports_tools": supports,
+        "error": None if supports else f"{model_name!r} is not in the known tool-calling allow-list",
+    }
     _cap_cache[model_name] = (now, result)
     return result
 
 
-def _ps_url() -> str:
-    root = settings.AGENT_BASE_URL.rstrip("/")
-    if root.endswith("/v1"):
-        root = root[:-3]
-    return root.rstrip("/") + "/api/ps"
-
-
-_ps_cache: tuple[float, Optional[dict]] = (0.0, None)
-_PS_TTL = 3.0  # short — this backs a live meter, but shields ml01 from every admin poll
-
-
-def ollama_residency() -> dict:
-    """Real GPU/CPU placement of every model currently loaded on the Ollama server,
-    read from ``/api/ps``. This is the *actual* hardware state — distinct from our
-    app-level admission gate — so IT can see when a model has been evicted to CPU
-    (``size_vram`` < ``size``), which is the usual cause of "requests never finish".
-
-    Returns ``{"reachable": bool, "models": [...], "error": str|None}`` where each
-    model carries ``size``, ``size_vram``, ``size_cpu``, ``gpu_pct`` and a coarse
-    ``placement`` in {"gpu", "partial", "cpu"}. Cached ``_PS_TTL`` seconds; never raises."""
-    global _ps_cache
-    now = time.time()
-    if _ps_cache[1] is not None and (now - _ps_cache[0]) < _PS_TTL:
-        return _ps_cache[1]
-
-    result: dict = {"reachable": False, "models": [], "error": None}
-    try:
-        import urllib.request
-        with urllib.request.urlopen(_ps_url(), timeout=3) as resp:  # noqa: S310 — internal host
-            data = json.loads(resp.read().decode("utf-8"))
-        result["reachable"] = True
-        for m in data.get("models") or []:
-            size = int(m.get("size") or 0)
-            vram = int(m.get("size_vram") or 0)
-            cpu = max(0, size - vram)
-            gpu_pct = round(100 * vram / size) if size else 0
-            if vram <= 0:
-                placement = "cpu"
-            elif cpu <= 0:
-                placement = "gpu"
-            else:
-                placement = "partial"
-            result["models"].append({
-                "name": m.get("name") or m.get("model") or "?",
-                "size": size,
-                "size_vram": vram,
-                "size_cpu": cpu,
-                "gpu_pct": gpu_pct,
-                "placement": placement,
-                "context_length": m.get("context_length"),
-                "expires_at": m.get("expires_at"),
-            })
-    except Exception as exc:  # noqa: BLE001
-        result["error"] = str(exc)
-
-    _ps_cache = (now, result)
-    return result
-
-
-def ollama_parallelism() -> dict:
-    """Server-side concurrency knobs, if this process happens to know them (they
-    configure the Ollama server on ml01, not our client, so they're usually only
-    set in the env when we run Ollama ourselves). ``None`` means "configured on the
-    server, not visible from here"."""
-    import os
-
-    def _int(name: str) -> Optional[int]:
-        raw = os.getenv(name)
-        try:
-            return int(raw) if raw not in (None, "") else None
-        except ValueError:
-            return None
-
-    return {
-        "num_parallel": _int("OLLAMA_NUM_PARALLEL"),
-        "max_loaded_models": _int("OLLAMA_MAX_LOADED_MODELS"),
-        "max_queue": _int("OLLAMA_MAX_QUEUE"),
-    }
-
-
 def server_capacity() -> dict:
     """The safe ceiling for our app-side ``max_concurrency`` — i.e. how many
-    generations the shared LLM server can actually run at once.
+    generations our app will admit to Groq at once.
 
-      * ``recommended`` — the number IT should not exceed. If the config beyond this
-        is applied, requests can't be served in parallel and instead pile onto the
-        GPU (the exact failure we see today with max_concurrency=40).
-      * ``hard`` — a real, server-derived ceiling we can *enforce* (raise on exceed).
-        Only set when Ollama's parallelism is visible from here (env vars present);
-        otherwise ``None`` (we warn but don't block, since we'd be guessing).
+    Groq is a hosted API: it doesn't expose a server-side concurrency/parallelism
+    knob we can introspect, and its actual ceiling is account-level rate limits
+    (requests-per-minute / tokens-per-minute), not a fixed slot count. So this is
+    purely our own app-side throttle, sized to stay comfortably under those limits:
+
+      * ``recommended`` — the number IT should not exceed without checking the
+        account's Groq rate limits against current traffic.
+      * ``hard`` — a real, operator-derived ceiling we can *enforce* (raise on
+        exceed). Only set when ``SERVER_MAX_CONCURRENCY`` is explicitly configured;
+        otherwise ``None`` (we warn but don't block, since there's nothing to enforce
+        against — Groq itself doesn't hand us a number).
       * ``basis`` — human-readable explanation of where the number came from.
     """
     import os
 
-    # Explicit operator override — the one knob that makes the ceiling enforceable
-    # when ml01's parallelism isn't visible here. Set SERVER_MAX_CONCURRENCY in the
-    # backend env to the shared server's real capacity and it becomes a hard cap.
+    # Explicit operator override — set SERVER_MAX_CONCURRENCY in the backend env to
+    # the safe ceiling for this Groq account (derived from its RPM/TPM limits) and it
+    # becomes a hard cap.
     try:
         explicit = os.getenv("SERVER_MAX_CONCURRENCY")
         if explicit not in (None, ""):
@@ -286,30 +213,13 @@ def server_capacity() -> dict:
     except (TypeError, ValueError):
         pass
 
-    par = ollama_parallelism()
-    num_parallel = par.get("num_parallel")
-    max_loaded = par.get("max_loaded_models")
-
-    if num_parallel:
-        if max_loaded:
-            hard = num_parallel * max_loaded
-            basis = f"OLLAMA_NUM_PARALLEL={num_parallel} × OLLAMA_MAX_LOADED_MODELS={max_loaded}"
-            return {"recommended": hard, "hard": hard, "basis": basis}
-        # Parallel-per-model known but loaded-model cap isn't → recommend, don't enforce.
-        return {
-            "recommended": num_parallel,
-            "hard": None,
-            "basis": f"OLLAMA_NUM_PARALLEL={num_parallel} per loaded model (loaded-model cap not visible)",
-        }
-
-    # Ollama's server-side parallelism isn't visible from this process. Fall back to
-    # the env-tuned safe default and only *warn* — hard-blocking on a guess would be wrong.
     return {
         "recommended": settings.CHAT_MAX_CONCURRENCY,
         "hard": None,
         "basis": (
-            f"conservative default (CHAT_MAX_CONCURRENCY={settings.CHAT_MAX_CONCURRENCY}); "
-            "ml01 parallelism isn't visible from here, so this is a guardrail, not a hard limit"
+            f"our own app-side default (CHAT_MAX_CONCURRENCY={settings.CHAT_MAX_CONCURRENCY}); "
+            "Groq's account rate limits aren't visible from here, so this is a guardrail, not a "
+            "server-derived limit"
         ),
     }
 
@@ -477,9 +387,6 @@ def get_llm(tier: str, *, default_timeout: Optional[float] = None,
         # Include token usage in the final streaming chunk (stream_options.include_usage).
         # Required for the observability token charts — without this, usage_metadata is None.
         stream_usage=True,
-        # Ask Ollama to keep this model in VRAM for 30 min after each call.
-        # Default is 5 min; 30m + 10min heartbeat ping = always resident, zero cold-reloads.
-        extra_body={"keep_alive": "30m"},
     )
     if max_tokens is not None:
         kwargs["max_tokens"] = max_tokens
@@ -527,9 +434,9 @@ def _validate_patch(patch: dict) -> dict:
         hard = cap.get("hard")
         if hard is not None and clean["max_concurrency"] > hard:
             raise ValueError(
-                f"max_concurrency {clean['max_concurrency']} exceeds the shared server's real "
-                f"capacity of {hard} ({cap['basis']}). Requests beyond this can't be served in "
-                f"parallel — they pile onto the GPU and every user slows down. Lower it to {hard} or below."
+                f"max_concurrency {clean['max_concurrency']} exceeds the configured hard cap of "
+                f"{hard} ({cap['basis']}). Requests beyond this pile up and risk tripping Groq's "
+                f"rate limits, slowing everyone down. Lower it to {hard} or below."
             )
 
     if "semantic_router" in patch:

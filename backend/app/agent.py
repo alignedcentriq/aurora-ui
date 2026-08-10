@@ -978,11 +978,9 @@ def get_my_appraisal_status(state: Annotated[dict, InjectedState] = None) -> str
             return "No active appraisal cycles found at this time."
         lines = ["**Appraisal Status**\n"]
         for c in cycles:
-            lines.append(f"- **{c['name']}** — {c['status']}")
-            if c.get("start_date") and c.get("end_date"):
-                lines.append(f"  Period: {c['start_date']} to {c['end_date']}")
-            if c.get("due_date"):
-                lines.append(f"  Due: {c['due_date']}")
+            period = f" ({c['start_date']} to {c['end_date']})" if c.get("start_date") and c.get("end_date") else ""
+            due = f" — due {c['due_date']}" if c.get("due_date") else ""
+            lines.append(f"- **{c['name']}** — {c['status']}{period}{due}")
         return "\n".join(lines)
     except ValueError:
         return _ZOHO_CONNECT_MSG
@@ -1041,9 +1039,8 @@ def get_my_expense_reports(status: str = "", state: Annotated[dict, InjectedStat
         lines = ["**Expense Reports**\n"]
         for r in reports:
             amt = f"{r['total']} {r['currency']}".strip()
-            lines.append(f"- **{r['name']}** — {r['status']} — {amt}")
-            if r.get("submitted_date"):
-                lines.append(f"  Submitted: {r['submitted_date']}")
+            submitted = f" — submitted {r['submitted_date']}" if r.get("submitted_date") else ""
+            lines.append(f"- **{r['name']}** — {r['status']} — {amt}{submitted}")
         return "\n".join(lines)
     except ValueError:
         return _ZOHO_CONNECT_MSG
@@ -1098,9 +1095,8 @@ def get_open_positions(state: Annotated[dict, InjectedState] = None) -> str:
         lines = ["**Open Positions**\n"]
         for p in positions:
             loc = f" — {p['city']}" if p.get("city") else ""
-            lines.append(f"- **{p['title']}**{loc} ({p['status']})")
-            if p.get("date_opened"):
-                lines.append(f"  Opened: {p['date_opened']}")
+            opened = f" — opened {p['date_opened']}" if p.get("date_opened") else ""
+            lines.append(f"- **{p['title']}**{loc} ({p['status']}){opened}")
         return "\n".join(lines)
     except ValueError:
         return _ZOHO_CONNECT_MSG
@@ -3636,8 +3632,13 @@ def hr_agent(state: AgentState):
         _user_q = next((m.content for m in reversed(messages) if isinstance(m, HumanMessage)), "")
         if _user_q:
             try:
+                from app.services.policy_service import DID_YOU_MEAN_SENTINEL
                 _policy_result = HRService.search_policies(str(_user_q), limit=3)
-                if _policy_result and "No policies found" not in _policy_result:
+                # Skip injecting as pre-answered context on a likely-typo hit — fall through
+                # to the normal search_policy tool call so the resulting ToolMessage carries
+                # the sentinel and _did_you_mean_card can build a clarify card from it.
+                if (_policy_result and "No policies found" not in _policy_result
+                        and DID_YOU_MEAN_SENTINEL not in _policy_result):
                     _hr_policy_context = f"\n[PRE-SEARCHED HR POLICY]\n{_policy_result}\n[END POLICY]\n"
             except Exception:
                 pass
@@ -3847,9 +3848,9 @@ async def deeplink_agent_node(state: AgentState):
                         total = b.get("total")
                         used = b.get("used")
                         if total is not None and used is not None:
-                            lines.append(f"{leave_type} — {balance} days remaining (used {used} of {total})")
+                            lines.append(f"- **{leave_type}** — {balance} days remaining (used {used} of {total})")
                         else:
-                            lines.append(f"{leave_type} — {balance} days remaining")
+                            lines.append(f"- **{leave_type}** — {balance} days remaining")
                     return {"messages": [AIMessage(content="Here is your current leave balance:\n\n" + "\n".join(lines))]}
                 else:
                     return {"messages": [AIMessage(content="Your leave balance data was retrieved but appears empty. Please try again or check Zoho People directly.")]}
@@ -4407,6 +4408,47 @@ async def domain_clarify_agent_node(state: AgentState):
     return {"messages": [AIMessage(content=content)]}
 
 
+def _did_you_mean_card(state: AgentState, result_messages: list, current_domain: str):
+    """Zero-LLM clarification card — fires when policy retrieval flagged a likely typo
+    (DID_YOU_MEAN_SENTINEL in a ToolMessage, see policy_service._expand_query) instead of
+    genuinely finding nothing. Offers the specific correction as a clickable option, so a
+    misspelled/confused query gets a targeted fix instead of a dead "not found" or a
+    domain-reroute/ticket-handoff card that doesn't address the actual problem. Runs BEFORE
+    _reroute_card_on_empty_retrieval / _abstention_handoff_card in every caller — a specific
+    correction beats "wrong domain?" or "raise a ticket?" when we already know the likely fix."""
+    from app.services.policy_service import DID_YOU_MEAN_SENTINEL
+    try:
+        hit = next(
+            (m.content for m in result_messages
+             if isinstance(m, ToolMessage) and DID_YOU_MEAN_SENTINEL in (m.content or "")),
+            None,
+        )
+        if not hit:
+            return None
+        suggestion = hit.split(DID_YOU_MEAN_SENTINEL, 1)[1].split("\n", 1)[0].strip()
+        if not suggestion:
+            return None
+        question = next(
+            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
+        ).strip()
+        if not question:
+            return None
+        options = [
+            {"label": f"Yes, show me {suggestion}", "action": "message", "value": suggestion},
+            {"label": "No, let me rephrase", "action": "message", "value": "Let me rephrase that."},
+        ]
+        payload = {
+            "question": f"Did you mean **{suggestion}**?",
+            "options": options,
+        }
+        return AIMessage(content=(
+            f"I couldn't find an exact match for \"{question}\" — did you mean **{suggestion}**?\n"
+            f"{QUICK_CHOICE_START}{json.dumps(payload)}{QUICK_CHOICE_END}"
+        ))
+    except Exception:
+        return None  # never let the suggestion check break a working answer
+
+
 def _reroute_card_on_empty_retrieval(state: AgentState, result_messages: list, current_domain: str):
     """Reversible routing — returns an AIMessage clarify card, or None to keep the agent's answer.
 
@@ -4537,9 +4579,12 @@ async def pmo_agent_node(state: AgentState):
     _last_human_pmo = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
     if isinstance(_last_human_pmo, str) and _KW_PMO_PROCESS.search(_last_human_pmo):
         try:
-            from app.services.policy_service import PolicyService
+            from app.services.policy_service import PolicyService, DID_YOU_MEAN_SENTINEL
             _pmo_result = await asyncio.to_thread(PolicyService.search_pmo_docs, _last_human_pmo, 3)
-            if _pmo_result and "No policies found" not in _pmo_result:
+            # Skip pre-answering on a likely-typo hit — fall through to the normal tool call
+            # so the resulting ToolMessage carries the sentinel for _did_you_mean_card.
+            if (_pmo_result and "No policies found" not in _pmo_result
+                    and DID_YOU_MEAN_SENTINEL not in _pmo_result):
                 _pmo_doc_context = (
                     f"\n[PRE-SEARCHED PMO DOC]\n{_pmo_result}\n[END DOC]\n\n"
                     f"The document above already answers this question — do NOT call search_pmo_docs. "
@@ -4560,6 +4605,9 @@ async def pmo_agent_node(state: AgentState):
     if not last_ai or not (last_ai.content or "").strip():
         last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
         last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process PMO request.")
+    dym = _did_you_mean_card(state, result["messages"], "pmo")
+    if dym:
+        return {"messages": [dym]}
     reroute = _reroute_card_on_empty_retrieval(state, result["messages"], "pmo")
     if reroute:
         return {"messages": [reroute]}
@@ -4593,9 +4641,20 @@ async def admin_agent_node(state: AgentState):
             or entities.get("policy_topic")
             or entities.get("topic")
         )
-        from app.services.policy_service import PolicyService
+        from app.services.policy_service import PolicyService, DID_YOU_MEAN_SENTINEL
         policy_result = PolicyService.search_admin_docs(str(topic), limit=2)
-        if policy_result and "No policies found" not in policy_result:
+        if policy_result and DID_YOU_MEAN_SENTINEL in policy_result:
+            suggestion = policy_result.split(DID_YOU_MEAN_SENTINEL, 1)[1].split("\n", 1)[0].strip()
+            options = [
+                {"label": f"Yes, show me {suggestion}", "action": "message", "value": suggestion},
+                {"label": "No, let me rephrase", "action": "message", "value": "Let me rephrase that."},
+            ]
+            payload = {"question": f"Did you mean **{suggestion}**?", "options": options}
+            return {"messages": [AIMessage(content=(
+                f"I couldn't find an exact match for \"{topic}\" — did you mean **{suggestion}**?\n"
+                f"{QUICK_CHOICE_START}{json.dumps(payload)}{QUICK_CHOICE_END}"
+            ))]}
+        elif policy_result and "No policies found" not in policy_result:
             # Return policy text directly — zero LLM, eliminates tool-call JSON leak
             return {"messages": [AIMessage(content=policy_result)]}
         else:
@@ -4617,8 +4676,10 @@ async def admin_agent_node(state: AgentState):
                 "",
             )
             if original_topic:
+                from app.services.policy_service import DID_YOU_MEAN_SENTINEL
                 policy_result = await asyncio.to_thread(HRService.search_policies, str(original_topic), limit=2)
-                if policy_result and "No policies found" not in policy_result:
+                if (policy_result and "No policies found" not in policy_result
+                        and DID_YOU_MEAN_SENTINEL not in policy_result):
                     feedback_ctx = f"[PRE-SEARCHED POLICY]\n{policy_result}\n[END POLICY]\n\n{feedback_ctx}"
 
     # Stamp sub_intent into feedback_ctx so admin_agent can select the right tool group
@@ -4635,6 +4696,9 @@ async def admin_agent_node(state: AgentState):
     if not last_ai or not (last_ai.content or "").strip():
         last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
         last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process Admin request.")
+    dym = _did_you_mean_card(state, result["messages"], "admin")
+    if dym:
+        return {"messages": [dym]}
     reroute = _reroute_card_on_empty_retrieval(state, result["messages"], "admin")
     if reroute:
         return {"messages": [reroute]}
@@ -4769,9 +4833,12 @@ async def it_agent_node(state: AgentState):
     _last_human_it = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
     if isinstance(_last_human_it, str) and _KW_IT_HOWTO.search(_last_human_it):
         try:
-            from app.services.policy_service import PolicyService
+            from app.services.policy_service import PolicyService, DID_YOU_MEAN_SENTINEL
             _it_result = await asyncio.to_thread(PolicyService.search_it_docs, _last_human_it, 3)
-            if _it_result and "No policies found" not in _it_result:
+            # Skip pre-answering on a likely-typo hit — fall through to the normal tool call
+            # so the resulting ToolMessage carries the sentinel for _did_you_mean_card.
+            if (_it_result and "No policies found" not in _it_result
+                    and DID_YOU_MEAN_SENTINEL not in _it_result):
                 _it_doc_context = (
                     f"\n[PRE-SEARCHED IT DOC]\n{_it_result}\n[END DOC]\n\n"
                     f"The document above already answers this question — do NOT call search_it_docs. "
@@ -4790,6 +4857,9 @@ async def it_agent_node(state: AgentState):
     if not last_ai or not (last_ai.content or "").strip():
         last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
         last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process IT request.")
+    dym = _did_you_mean_card(state, result["messages"], "it_support")
+    if dym:
+        return {"messages": [dym]}
     reroute = _reroute_card_on_empty_retrieval(state, result["messages"], "it_support")
     if reroute:
         return {"messages": [reroute]}
@@ -4809,6 +4879,9 @@ async def manager_agent_node(state: AgentState):
     if not last_ai or not (last_ai.content or "").strip():
         last_tool = next((m for m in reversed(result["messages"]) if isinstance(m, ToolMessage) and m.content), None)
         last_ai = AIMessage(content=last_tool.content if last_tool else "Failed to process Manager request.")
+    dym = _did_you_mean_card(state, result["messages"], "functional_manager")
+    if dym:
+        return {"messages": [dym]}
     reroute = _reroute_card_on_empty_retrieval(state, result["messages"], "functional_manager")
     if reroute:
         return {"messages": [reroute]}
@@ -5199,6 +5272,12 @@ async def summarizer(state: AgentState):
     tool_name = getattr(tool_message, "name", "")
     if tool_name in _PASSTHROUGH_TOOLS:
         return {"messages": [AIMessage(content=str(tool_output).strip())]}
+
+    # Did-you-mean (HR path): retrieval flagged a likely typo — offer the specific
+    # correction before falling back to a domain re-route or ticket handoff.
+    dym = _did_you_mean_card(state, [tool_message], "hr")
+    if dym:
+        return {"messages": [dym]}
 
     # Reversible routing (HR path): retrieval hit the semantic veto on an LLM-guessed
     # route — offer a re-route card instead of summarizing a not-found message.

@@ -266,7 +266,7 @@ export function AIMessage({
           <div
             className={cn(
               "chat-bubble-assistant",
-              onVideoBg && "on-video",
+              onVideoBg && "on-video dark",
               badge && `border-l-2 ${badge.borderColor}`,
             )}
           >
@@ -423,6 +423,7 @@ export function AIMessage({
                 originalQuery={originalQuery}
                 errorType="unsatisfied"
                 compact
+                onVideoBg={onVideoBg}
               />
             </motion.div>
           )}
@@ -435,6 +436,7 @@ export function AIMessage({
               originalQuery={originalQuery}
               errorType={isError ? "error" : "unsatisfied"}
               compact={feedbackState === "submitted"}
+              onVideoBg={onVideoBg}
             />
           )}
         </div>

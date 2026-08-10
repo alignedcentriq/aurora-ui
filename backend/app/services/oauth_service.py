@@ -568,6 +568,43 @@ async def get_yammer_token(user_email: str) -> str | None:
         db.close()
 
 
+# -- TechElevate SSO exchange -------------------------------------------------
+
+async def exchange_techelevate_id_token(id_token: str) -> tuple[str | None, str | None]:
+    """Exchange a browser-minted Azure AD id_token for a TechElevate-native JWT.
+
+    The frontend acquires the id_token via MSAL (acquireTokenSilent, openid scope) and posts
+    it to /connect. We forward it to TechElevate's /auth/sso-login, which validates the Azure
+    token itself and returns its own JWT — no stored Microsoft refresh token or connected_accounts
+    row is required, and no TechElevate service-account credentials exist in this environment.
+
+    Returns (jwt, None) on success or (None, detail) with the upstream reason.
+    """
+    if not id_token:
+        return None, "no id_token supplied"
+
+    te_base = settings.TECHELEVATE_BASE_URL.rstrip("/").removesuffix("/api")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{te_base}/api/auth/sso-login",
+                json={"id_token": id_token},
+            )
+    except Exception as e:  # noqa: BLE001 — network/JSON issues surface as "not connected"
+        log.warning("[oauth] TechElevate sso-login request failed: %s", e)
+        return None, f"request failed: {e}"
+
+    if resp.status_code != 200:
+        detail = resp.text[:300]
+        log.warning("[oauth] TechElevate sso-login rejected id_token: %s %s",
+                    resp.status_code, detail)
+        return None, f"sso-login {resp.status_code}: {detail}"
+
+    data = resp.json()
+    token = data.get("access_token") or data.get("token")
+    return (token, None) if token else (None, f"no token in sso-login response: {str(data)[:200]}")
+
+
 def get_connection_status(user_email: str) -> list[dict]:
     """Return connection status for all providers for a given user."""
     db = SessionLocal()

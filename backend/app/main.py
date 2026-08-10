@@ -28,7 +28,7 @@ from app.concurrency import chat_gate
 from app.services.llm_resilience import ServerBusyError
 from langchain_core.messages import HumanMessage
 from app.hr_service import HRService
-from app.config import settings, ALIGNED_LLM_HOST
+from app.config import settings
 from app.services import llm_controls_service as llm_controls
 from app.database import init_db, SessionLocal
 from app.models import Leave, ApprovalToken
@@ -74,6 +74,7 @@ from app.routes.skill_it_routes import router as skill_it_router
 from app.routes.skill_doc_routes import router as skill_doc_router
 from app.routes.connector_routes import router as connector_admin_router, invoke_router as connector_invoke_router
 from app.routes.techelevate_local_routes import router as techelevate_local_router
+from app.routes.techelevate_routes import router as techelevate_router
 from app.routes.udemy_routes import router as udemy_router
 from app.routes.project_iq_routes import router as project_iq_router
 from app.routes.onboarding_routes import router as onboarding_router
@@ -97,69 +98,13 @@ app = FastAPI(title="Centriq AI Backend")
 
 
 # ── Model warm-up helpers ──────────────────────────────────────────────────────
-
-def _ollama_root() -> str:
-    base = settings.AGENT_BASE_URL.rstrip("/")
-    return base[:-3] if base.endswith("/v1") else base
-
-
-def _ping_model(model: str) -> bool:
-    """POST a 0-token request to Ollama to keep ``model`` loaded in VRAM.
-
-    Uses num_predict=0 so the server loads weights but generates nothing —
-    the cheapest possible keep-alive.  keep_alive=30m extends the eviction
-    window — 10min heartbeat cycle + 30min window = always warm even under load.
-    """
-    import urllib.request, json as _json
-    url = _ollama_root() + "/api/generate"
-    payload = _json.dumps({
-        "model": model,
-        "prompt": "",
-        "keep_alive": "30m",
-        "options": {"num_predict": 0},
-    }).encode()
-    req = urllib.request.Request(
-        url, data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as _:  # noqa: S310
-            pass
-        return True
-    except Exception as exc:  # noqa: BLE001
-        return False
-
+# No-op on Groq: it's a hosted API with no local VRAM to keep a model resident in
+# (the whole point of this used to be dodging ml01's cold-reload/eviction penalty).
+# Kept as a function so /api/warmup and the background scheduler below don't need
+# call-site changes.
 
 async def _warmup_task() -> None:
-    """Ping every model tier once — run as a fire-and-forget task.
-
-    Covers generation tiers (agent, service, summarizer) AND the embedding model
-    and router model. Keeping the embed model warm eliminates cold-reload on the
-    first semantic-router/answer-cache/form-match call of the day.
-    """
-    try:
-        cfg = llm_controls.get_config()
-        tiers = cfg.get("tiers", {})
-        seen: set[str] = set()
-        # Generation tiers
-        for tier in ("agent", "service", "summarizer"):
-            model = (tiers.get(tier) or {}).get("model", "")
-            if model and model not in seen:
-                seen.add(model)
-                await asyncio.to_thread(_ping_model, model)
-        # Router model (small, but still benefits from residency)
-        router_model = settings.ROUTER_MODEL_NAME
-        if router_model and router_model not in seen:
-            seen.add(router_model)
-            await asyncio.to_thread(_ping_model, router_model)
-        # Embedding model — critical for semantic router + answer cache on every request
-        embed_model = settings.EMBEDDING_MODEL_NAME
-        if embed_model and embed_model not in seen:
-            seen.add(embed_model)
-            await asyncio.to_thread(_ping_model, embed_model)
-    except Exception:  # noqa: BLE001
-        pass
+    pass
 
 
 
@@ -210,6 +155,7 @@ app.include_router(skill_doc_router)
 app.include_router(connector_admin_router)
 app.include_router(connector_invoke_router)
 app.include_router(techelevate_local_router)
+app.include_router(techelevate_router)
 app.include_router(udemy_router)
 app.include_router(project_iq_router)
 app.include_router(onboarding_router)
@@ -572,21 +518,24 @@ async def me(user: CurrentUser = Depends(get_current_user)):
 
 @app.get("/api/health/llm")
 async def llm_health():
-    """Probe the shared Ollama server (3s timeout) and report per-tier breaker state.
+    """Probe Groq's API (3s timeout) and report per-tier breaker state.
 
     status: "ok" (reachable, all breakers closed), "degraded" (reachable but at least
     one tier's circuit breaker is open — fallback models are serving that tier), or
-    "down" (Ollama unreachable — VPN required from outside office)."""
+    "down" (Groq unreachable — network/API-key problem)."""
     from app.services.llm_resilience import get_breaker_status, get_load_reject_status
-    import urllib.request
+    import requests
 
-    base = settings.AGENT_BASE_URL.rsplit("/v1", 1)[0]
+    base = settings.AGENT_BASE_URL.rstrip("/")
 
     def _probe() -> bool:
         try:
-            req = urllib.request.Request(f"{base}/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                return resp.status == 200
+            resp = requests.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {settings.AGENT_API_KEY}"},
+                timeout=3,
+            )
+            return resp.status_code == 200
         except Exception:
             return False
 
@@ -596,16 +545,16 @@ async def llm_health():
     if not reachable:
         status = "down"
     elif any(state == "open" for state in breakers.values()) or load_rejects["recent"]:
-        # "recent" load-rejects: ml01 is up but refusing to load non-resident
-        # models — chats are being served by the resident-model rescue path.
+        # "recent" load-rejects: the provider is up but rate-limiting/throttling us —
+        # chats may be served by a fallback model or a busy signal.
         status = "degraded"
     else:
         status = "ok"
     return {
         "status": status,
-        "ollama_reachable": reachable,
+        "groq_reachable": reachable,
         "circuit_breakers": breakers,
-        "ml01_load_rejects": load_rejects,
+        "groq_load_rejects": load_rejects,
     }
 
 @app.get("/api/chat/load")
@@ -615,7 +564,7 @@ async def chat_load():
     try:
         from app.services.llm_resilience import get_breaker_status, get_load_reject_status
         stats["circuit_breakers"] = get_breaker_status()
-        stats["ml01_load_rejects"] = get_load_reject_status()
+        stats["groq_load_rejects"] = get_load_reject_status()
     except Exception:
         pass
     try:
@@ -1865,9 +1814,10 @@ async def chat(
             async for event in app_agent.astream_events(input_data, config=config, version="v2"):
                 if not st["client_gone"] and await raw_request.is_disconnected():
                     st["client_gone"] = True
-                # Client left mid-answer (Stop): abort to free the GPU. Client left
-                # BEFORE the first token (still queued/thinking): keep generating —
-                # the answer is delivered via the nudge bell when it completes.
+                # Client left mid-answer (Stop): abort so we stop paying for tokens
+                # nobody will read. Client left BEFORE the first token (still
+                # queued/thinking): keep generating — the answer is delivered via
+                # the nudge bell when it completes.
                 if st["client_gone"] and st["streamed"]:
                     break
                 event_type = event.get("event", "")

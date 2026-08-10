@@ -538,20 +538,25 @@ export function HomeRightRail() {
     });
   };
 
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("centriq-right-rail-state", { detail: { open } }));
+  }, [open]);
+
+  useEffect(() => {
+    const handleToggle = () => {
+      setOpen((v) => {
+        const next = !v;
+        localStorage.setItem(RAIL_OPEN_KEY, next ? "1" : "0");
+        return next;
+      });
+    };
+    window.addEventListener("centriq-toggle-right-rail", handleToggle);
+    return () => window.removeEventListener("centriq-toggle-right-rail", handleToggle);
+  }, []);
+
   if (!user?.email) return null;
 
-  if (!open) {
-    return (
-      <button
-        onClick={toggle}
-        title="Show meetings, appreciation & celebrations"
-        aria-label="Open sidebar"
-        className="hidden lg:flex fixed top-20 right-4 z-20 h-10 w-10 items-center justify-center rounded-full border border-border bg-card/80 text-muted-foreground shadow-md backdrop-blur-xl transition-all hover:text-primary hover:shadow-lg cursor-pointer"
-      >
-        <PanelRightOpen className="h-4.5 w-4.5" />
-      </button>
-    );
-  }
+  if (!open) return null;
 
   return (
     <TooltipProvider delayDuration={200}>

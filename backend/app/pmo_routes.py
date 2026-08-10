@@ -52,6 +52,12 @@ class ProjectCreate(BaseModel):
     owner: Optional[str] = None
 
 
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    status: Optional[str] = None
+    owner: Optional[str] = None
+
+
 class PaginatedResponse(BaseModel):
     total: int
     page: int
@@ -150,3 +156,49 @@ def create_project(
     db.commit()
     db.refresh(project)
     return ProjectSchema.model_validate(project)
+
+
+@router.put("/projects/{project_id}", response_model=ProjectSchema, summary="Update a project")
+def update_project(
+    project_id: int,
+    body: ProjectUpdate,
+    user: CurrentUser = Depends(require_pmo),
+    db: Session = Depends(get_db),
+):
+    """Manually-created projects only — the live allocation-derived roster (synthetic
+    negative ids from list_projects) has no backing row here and can't be edited."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if body.name is not None:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Project name is required.")
+        existing = db.query(Project).filter(Project.name == name, Project.id != project_id).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="A project with this name already exists.")
+        project.name = name
+    if body.status is not None:
+        project.status = body.status
+    if body.owner is not None:
+        project.owner = body.owner
+
+    db.commit()
+    db.refresh(project)
+    return ProjectSchema.model_validate(project)
+
+
+@router.delete("/projects/{project_id}", summary="Delete a project")
+def delete_project(
+    project_id: int,
+    user: CurrentUser = Depends(require_pmo),
+    db: Session = Depends(get_db),
+):
+    """Manually-created projects only — see update_project."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    db.delete(project)
+    db.commit()
+    return {"message": f"Project '{project.name}' deleted successfully"}

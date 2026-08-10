@@ -1572,16 +1572,16 @@ def builder_chat(
     from app.services.llm_resilience import resilient_invoke
 
     def _invoke_intent(msgs: list) -> BuilderIntent:
-        # Ideally "service" tier (llama3.1:8b) — this schema spans ~35 data sources,
+        # "service" tier, not "router" — this schema spans ~35 data sources,
         # group_by/filter/chart_type fields, and combine-mode joins, a much harder
-        # structured-extraction job than the domain classification "router" was sized for.
-        # Reverted to "router" for now: ml01 currently has only llama3.2:3b resident (on
-        # CPU) and is rejecting new model loads, so requesting "service" just burns retries
-        # against the load-reject rescue and sometimes times out outright — worse than
-        # answering promptly on 3b. Flip this back to "service" once ml01 has spare capacity
-        # to hold llama3.1:8b resident (see ml01-load-reject-rescue).
+        # structured-extraction job than the domain classification "router" tier is
+        # sized for. Previously stuck on "router" because ml01 couldn't hold a
+        # second resident model under load; Groq has no such capacity limit.
+        # method="function_calling": Groq rejects the default "json_schema" structured-output
+        # mode for this schema (dict-typed fields need additionalProperties:false for strict
+        # mode) — tool-calling based structured output works on every Groq tool-capable model.
         result = resilient_invoke(
-            "router", msgs, build=lambda llm: llm.with_structured_output(BuilderIntent),
+            "service", msgs, build=lambda llm: llm.with_structured_output(BuilderIntent, method="function_calling"),
         )
         return result if isinstance(result, BuilderIntent) else BuilderIntent(**dict(result))
 

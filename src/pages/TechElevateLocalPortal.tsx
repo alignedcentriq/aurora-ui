@@ -42,8 +42,24 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
+import { TrainingsPanel } from "@/pages/techelevate/TrainingsPanel";
+import { AssignmentsPanel } from "@/pages/techelevate/AssignmentsPanel";
+import { GroupsPanel } from "@/pages/techelevate/GroupsPanel";
+import { MCQPanel } from "@/pages/techelevate/MCQPanel";
+import { ReportsPanel } from "@/pages/techelevate/ReportsPanel";
+import { UsersPanel } from "@/pages/techelevate/UsersPanel";
+import { MyLearningPanel } from "@/pages/techelevate/MyLearningPanel";
+import { BarChart3, ShieldCheck } from "lucide-react";
 
-type Tab = "trainings" | "assignments" | "groups" | "mine";
+// Two data sources coexist deliberately: "local" is the original offline simulator
+// (this file's Trainings/Assignments/Groups/My Learning tabs, backed by our own DB —
+// still fully functional), "live" talks to the real TechElevate API. Default to local
+// until real TechElevate SSO access is confirmed working end-to-end; flip the default
+// below once it is.
+type DataSource = "local" | "live";
+const DEFAULT_DATA_SOURCE: DataSource = "local";
+
+type Tab = "trainings" | "assignments" | "groups" | "mcq" | "reports" | "users" | "mine";
 
 interface ContentItem {
   id: number;
@@ -126,6 +142,7 @@ const STATUS_STYLES: Record<string, string> = {
 export function TechElevateLocalPortal() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("trainings");
+  const [source, setSource] = useState<DataSource>(DEFAULT_DATA_SOURCE);
   const [canManage, setCanManage] = useState(false);
   const [canViewAdmin, setCanViewAdmin] = useState(false);
   const [portalUrl, setPortalUrl] = useState<string>("");
@@ -150,6 +167,14 @@ export function TechElevateLocalPortal() {
       .catch(() => { setCanManage(false); setCanViewAdmin(false); });
   }, [authHeaders]);
 
+  // "mcq"/"reports"/"users" only exist under the live data source — bounce back to
+  // Trainings rather than leaving the pane blank if local is selected while on one of them.
+  useEffect(() => {
+    if (source === "local" && (tab === "mcq" || tab === "reports" || tab === "users")) {
+      setTab("trainings");
+    }
+  }, [source, tab]);
+
   const tabs: { id: Tab; label: string; subLabel: string; icon: typeof BookOpen; show: boolean }[] =
     [
       { id: "trainings", label: "Trainings", subLabel: "Catalog", icon: BookOpen, show: true },
@@ -161,6 +186,10 @@ export function TechElevateLocalPortal() {
         show: canViewAdmin,
       },
       { id: "groups", label: "Groups", subLabel: "Cohorts", icon: Users, show: canManage },
+      // These three have no local/offline equivalent — only meaningful once "live" is selected.
+      { id: "mcq", label: "MCQ Bank", subLabel: "Questions", icon: HelpCircle, show: canViewAdmin && source === "live" },
+      { id: "reports", label: "Reports", subLabel: "Insights", icon: BarChart3, show: canViewAdmin && source === "live" },
+      { id: "users", label: "Users", subLabel: "Directory", icon: ShieldCheck, show: canManage && source === "live" },
       { id: "mine", label: "My Learning", subLabel: "Plan", icon: UserCircle, show: true },
     ];
 
@@ -180,17 +209,36 @@ export function TechElevateLocalPortal() {
           <div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/20">
-                Local Simulator
+                {source === "live" ? "Live · Real TechElevate" : "Local Simulator"}
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1 max-w-xl">
-              In-house learning portal. Complete standard/multi-level course assessments to earn
-              verified skills.
+              {source === "live"
+                ? "Backed by the real TechElevate API (training.alignedautomation.com)."
+                : "In-house learning portal. Complete standard/multi-level course assessments to earn verified skills."}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Local (offline simulator) vs Live (real TechElevate API) — default is local until
+              real TechElevate SSO access is confirmed working end-to-end. */}
+          <div className="flex items-center gap-0.5 p-1 rounded-xl border border-slate-200/60 dark:border-zinc-800/80 bg-slate-100/80 dark:bg-zinc-900/60">
+            {(["local", "live"] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => setSource(s)}
+                className={cn(
+                  "px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-colors cursor-pointer",
+                  source === s
+                    ? "bg-white dark:bg-zinc-800 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                    : "text-slate-400 dark:text-zinc-500 hover:text-slate-600 dark:hover:text-zinc-300",
+                )}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
           {portalUrl && (
             <a
               href={portalUrl}
@@ -261,11 +309,42 @@ export function TechElevateLocalPortal() {
             transition={{ duration: 0.22, ease: "easeOut" }}
           >
             {tab === "trainings" && (
-              <TrainingsTab authHeaders={authHeaders} canManage={canManage} />
+              source === "live" ? (
+                <TrainingsPanel authHeaders={authHeaders} canManage={canManage} />
+              ) : (
+                <TrainingsTab authHeaders={authHeaders} canManage={canManage} />
+              )
             )}
-            {tab === "assignments" && canViewAdmin && <AssignmentsTab authHeaders={authHeaders} canManage={canManage} />}
-            {tab === "groups" && canManage && <GroupsTab authHeaders={authHeaders} />}
-            {tab === "mine" && <MyLearningTab authHeaders={authHeaders} portalUrl={portalUrl} />}
+            {tab === "assignments" && canViewAdmin && (
+              source === "live" ? (
+                <AssignmentsPanel authHeaders={authHeaders} canManage={canManage} />
+              ) : (
+                <AssignmentsTab authHeaders={authHeaders} canManage={canManage} />
+              )
+            )}
+            {tab === "groups" && canManage && (
+              source === "live" ? (
+                <GroupsPanel authHeaders={authHeaders} />
+              ) : (
+                <GroupsTab authHeaders={authHeaders} />
+              )
+            )}
+            {tab === "mcq" && canViewAdmin && source === "live" && (
+              <MCQPanel authHeaders={authHeaders} canManage={canManage} />
+            )}
+            {tab === "reports" && canViewAdmin && source === "live" && (
+              <ReportsPanel authHeaders={authHeaders} />
+            )}
+            {tab === "users" && canManage && source === "live" && (
+              <UsersPanel authHeaders={authHeaders} />
+            )}
+            {tab === "mine" && (
+              source === "live" ? (
+                <MyLearningPanel authHeaders={authHeaders} portalUrl={portalUrl} />
+              ) : (
+                <MyLearningTab authHeaders={authHeaders} portalUrl={portalUrl} />
+              )
+            )}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -1127,7 +1206,46 @@ function CreateTrainingModal({
     multiLevel && createdLevels.length ? (createdLevels[activeLevel]?.id ?? null) : null;
 
   return (
-    <Modal title="Create Course" onClose={onClose} wide>
+    <Modal
+      title="Create Course"
+      onClose={onClose}
+      size="xl"
+      footer={
+        step < 4 ? (
+          <div className="flex flex-col gap-2.5">
+            {err && <p className="text-xs font-bold text-red-500 dark:text-red-400">{err}</p>}
+            <div className="flex justify-between gap-2">
+              <button
+                onClick={step === 1 ? onClose : () => setStep((s) => s - 1)}
+                disabled={saving || (step > 1 && step <= 3 && false)}
+                className="px-4 py-2.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-zinc-800/80 text-slate-600 dark:text-zinc-400 hover:bg-slate-50 dark:hover:bg-zinc-900 transition-all cursor-pointer inline-flex items-center gap-1.5"
+              >
+                {step === 1 ? "Cancel" : (<><ArrowLeft className="w-3.5 h-3.5" /> Back</>)}
+              </button>
+
+              {step === 1 && (
+                <button
+                  onClick={createBasics}
+                  disabled={saving}
+                  className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-md shadow-indigo-600/25 transition-all cursor-pointer active:scale-95 disabled:opacity-50 inline-flex items-center gap-1.5"
+                >
+                  {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  {trainingId != null ? "Continue" : "Create & add content"} <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {(step === 2 || step === 3) && (
+                <button
+                  onClick={() => setStep((s) => s + 1)}
+                  className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-md shadow-indigo-600/25 transition-all cursor-pointer active:scale-95 inline-flex items-center gap-1.5"
+                >
+                  {step === 3 ? "Finish" : "Next"} <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        ) : null
+      }
+    >
       {/* Stepper */}
       <div className="flex items-center gap-1.5 mb-5">
         {STEPS.map((s, i) => {
@@ -1367,39 +1485,6 @@ function CreateTrainingModal({
         </div>
       )}
 
-      {err && <p className="text-xs font-bold text-red-500 dark:text-red-400 mt-3">{err}</p>}
-
-      {/* Footer nav */}
-      {step < 4 && (
-        <div className="flex justify-between gap-2 pt-4 mt-4 border-t border-slate-100 dark:border-zinc-900">
-          <button
-            onClick={step === 1 ? onClose : () => setStep((s) => s - 1)}
-            disabled={saving || (step > 1 && step <= 3 && false)}
-            className="px-4 py-2.5 text-xs font-bold rounded-xl border border-slate-200 dark:border-zinc-800/80 text-slate-600 dark:text-zinc-400 hover:bg-slate-50 dark:hover:bg-zinc-900 transition-all cursor-pointer inline-flex items-center gap-1.5"
-          >
-            {step === 1 ? "Cancel" : (<><ArrowLeft className="w-3.5 h-3.5" /> Back</>)}
-          </button>
-
-          {step === 1 && (
-            <button
-              onClick={createBasics}
-              disabled={saving}
-              className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-md shadow-indigo-600/25 transition-all cursor-pointer active:scale-95 disabled:opacity-50 inline-flex items-center gap-1.5"
-            >
-              {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              {trainingId != null ? "Continue" : "Create & add content"} <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {(step === 2 || step === 3) && (
-            <button
-              onClick={() => setStep((s) => s + 1)}
-              className="px-4 py-2.5 text-xs font-bold rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-md shadow-indigo-600/25 transition-all cursor-pointer active:scale-95 inline-flex items-center gap-1.5"
-            >
-              {step === 3 ? "Finish" : "Next"} <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      )}
     </Modal>
   );
 }
@@ -3263,7 +3348,7 @@ function KpiCard({
   );
 }
 
-function Spinner({ label }: { label: string }) {
+export function Spinner({ label }: { label: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-slate-400 dark:text-zinc-500 gap-3">
       <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
@@ -3272,17 +3357,22 @@ function Spinner({ label }: { label: string }) {
   );
 }
 
-function Modal({
+export function Modal({
   title,
   children,
   onClose,
   wide = false,
+  size,
+  footer,
 }: {
   title: string;
   children: React.ReactNode;
   onClose: () => void;
   wide?: boolean;
+  size?: "md" | "lg" | "xl";
+  footer?: React.ReactNode;
 }) {
+  const resolvedSize = size ?? (wide ? "lg" : "md");
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 dark:bg-black/60 backdrop-blur-xs p-4"
@@ -3294,7 +3384,7 @@ function Modal({
         transition={{ duration: 0.2, ease: "easeOut" }}
         className={cn(
           "w-full max-h-[90vh] flex flex-col rounded-3xl border border-slate-200/60 dark:border-zinc-800 bg-white dark:bg-zinc-950 shadow-2xl",
-          wide ? "max-w-3xl" : "max-w-lg",
+          resolvedSize === "xl" ? "max-w-4xl" : resolvedSize === "lg" ? "max-w-3xl" : "max-w-lg",
         )}
         onClick={(e) => e.stopPropagation()}
       >
@@ -3312,6 +3402,11 @@ function Modal({
         <div className="p-5 flex-1 overflow-y-auto">
           {children}
         </div>
+        {footer && (
+          <div className="shrink-0 px-5 py-4 border-t border-slate-100 dark:border-zinc-900 bg-white dark:bg-zinc-950 rounded-b-3xl">
+            {footer}
+          </div>
+        )}
       </motion.div>
     </div>
   );

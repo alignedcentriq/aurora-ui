@@ -120,10 +120,8 @@ async def generate_training_draft(payload: dict = Body(...),
 
     from functools import partial
     from starlette.concurrency import run_in_threadpool
-    from app.services import llm_controls_service as llm_controls
     from app.services.llm_json import invoke_json
 
-    model = llm_controls.get_llm("general", default_timeout=45)
     # Keep the prompt and expected output small so the local model responds fast.
     # Levels are auto-computed below — don't ask the model to generate them.
     prompt = (
@@ -136,7 +134,7 @@ async def generate_training_draft(payload: dict = Body(...),
         "skill_tags 2-4 concrete skills; multi_level true only for topics with clear beginner→advanced progression. "
         "Output raw JSON only, no fences."
     )
-    draft = await run_in_threadpool(partial(invoke_json, model, prompt, 1))
+    draft = await run_in_threadpool(partial(invoke_json, "general", prompt, 2, default_timeout=45))
     if draft is None:
         raise HTTPException(status_code=502, detail="Couldn't draft the course — the shared LLM timed out. Try again or fill in the fields manually.")
 

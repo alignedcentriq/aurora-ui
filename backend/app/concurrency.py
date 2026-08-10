@@ -1,11 +1,11 @@
 """Concurrency gate for AI chat requests.
 
-The shared LLM server (ml01) can only generate for a handful of requests at
-once. Without a cap, a burst of concurrent chats overwhelms the GPU and every
-user sees minutes-long latency (or timeouts). This gate bounds how many chats
-run the LLM chain simultaneously; extra requests wait in a bounded queue, and
-once that queue is full new requests are rejected fast with a friendly "busy"
-signal instead of piling more load onto the GPU.
+Groq is a hosted API with its own account-level rate limits (RPM/TPM) — without a
+cap on our side, a burst of concurrent chats can blow through those limits and every
+user starts seeing busy signals or timeouts. This gate bounds how many chats run the
+LLM chain simultaneously; extra requests wait in a bounded queue, and once that queue
+is full new requests are rejected fast with a friendly "busy" signal instead of
+sending even more traffic at Groq.
 
 Two backends, chosen by CHAT_GATE_BACKEND (auto | redis | memory):
 
@@ -48,7 +48,7 @@ class BaseChatGate:
 
     def __init__(self, max_concurrency: int, max_queue: int, acquire_timeout: float):
         # Env values become the fallback defaults; the live caps come from the IT
-        # controls (cached ~5s) so IT can throttle GPU load without a restart.
+        # controls (cached ~5s) so IT can throttle load without a restart.
         self._default_max_concurrency = max_concurrency
         self._default_max_queue = max_queue
         self.acquire_timeout = acquire_timeout

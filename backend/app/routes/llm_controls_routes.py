@@ -57,7 +57,7 @@ async def get_model_capabilities(
     model: str = Query(..., description="Model name to check"),
     _: CurrentUser = Depends(require_super_admin),
 ):
-    """Fetch Ollama-reported capabilities for a model and compare against per-tier requirements.
+    """Check a Groq model's tool-calling capability and compare against per-tier requirements.
     Used by the UI to warn IT before applying a model that lacks required capabilities."""
     result = llm_controls.model_capabilities(model)
     # Annotate which tiers this model would be incompatible with
@@ -72,45 +72,49 @@ async def get_model_capabilities(
 
 @router.get("/capacity")
 async def get_capacity(_: CurrentUser = Depends(require_super_admin)):
-    """Live capacity picture across all three layers, for the LLM controls dashboard:
+    """Live traffic + health picture of this app's calls to Groq, for the LLM
+    controls dashboard:
 
-      * gate      — our app admission queue (how many chats are running the LLM chain
-                    right now / waiting / the caps that bound them).
-      * ollama    — the *real* GPU/CPU placement of every loaded model on ml01 (from
-                    /api/ps). Surfaces CPU eviction, the usual "requests never finish" cause.
-      * capacity  — how many concurrent requests the system actually admits, plus any
-                    server-side Ollama parallelism knobs visible from here.
+      * gate             — our app admission queue (how many chats are running the
+                           LLM chain right now / waiting / the caps that bound them).
+                           This is the real, current traffic — not a guess.
+      * capacity         — how many concurrent requests our app admits, plus the
+                           safe ceiling for that knob (Groq itself has no server-side
+                           concurrency slot to introspect — only account rate limits).
+      * circuit_breakers — per-tier breaker state (open = serving on a fallback model).
+      * load_rejects     — how often Groq has rate-limited (429) us recently.
 
-    Read-only. Cached ~3s server-side so many admin pollers issue one ml01 probe."""
+    Read-only. Cached ~3s server-side so many admin pollers issue one probe."""
     from app.concurrency import chat_gate
+    from app.services.llm_resilience import get_breaker_status, get_load_reject_status
 
     # detailed_stats() = stats() + per-request identity (running / waiting_list
     # entries carry email, question snippet, elapsed) for the live-traffic table.
     gate = await chat_gate.detailed_stats()
-    residency = llm_controls.ollama_residency()
-    parallel = llm_controls.ollama_parallelism()
 
     try:
-        from app.services.llm_resilience import get_breaker_status
         breakers = get_breaker_status()
     except Exception:  # noqa: BLE001
         breakers = {}
 
+    try:
+        load_rejects = get_load_reject_status()
+    except Exception:  # noqa: BLE001
+        load_rejects = {}
+
     max_conc, max_queue = llm_controls.concurrency_limits()
     return {
         "gate": gate,
-        "ollama": residency,
         "capacity": {
-            # The authoritative ceiling on simultaneous generations is our app gate,
-            # since the shared server can't be tuned from here.
+            # The authoritative ceiling on simultaneous generations is our app gate —
+            # Groq doesn't expose a server-side slot count to tune against.
             "max_concurrency": max_conc,
             "max_queue": max_queue,
-            "loaded_models": len(residency.get("models") or []),
-            "ollama_parallel": parallel,
             # Safe ceiling for max_concurrency (drives the editor's validation).
             "server_capacity": llm_controls.server_capacity(),
         },
         "circuit_breakers": breakers,
+        "load_rejects": load_rejects,
     }
 
 

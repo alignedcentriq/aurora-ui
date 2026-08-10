@@ -61,6 +61,11 @@ EVAL_SET: list[tuple[str, str, str | None]] = [
     ("need a github copilot seat", "it_support", "license_request"),
     ("what gadgets are assigned to me", "it_support", "my_assets"),
     ("open a support ticket for me", "it_support", "create_ticket"),
+    ("can you create a new azure devops project for our team", "it_support", None),
+    ("I need to register an app in azure ad", "it_support", None),
+    ("we need api permissions added for our azure ad app", "it_support", None),
+    ("can I get access to the sales database", "it_support", None),
+    ("I need an export of data from the crm system", "it_support", None),
 
     # ── pmo ────────────────────────────────────────────────────────────────────
     ("list every active company project", "pmo", "list_projects"),
