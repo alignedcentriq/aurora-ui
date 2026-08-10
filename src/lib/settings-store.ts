@@ -332,7 +332,7 @@ interface SettingsState {
 export const useSettings = create<SettingsState>()(
   persist(
     (set) => ({
-      theme: "system",
+      theme: "dark",
       setTheme: (theme) => set({ theme }),
 
       loadingCharId: "centriq",
@@ -376,11 +376,15 @@ export const useSettings = create<SettingsState>()(
     }),
     {
       name: "aurora-settings",
-      version: 1,
+      version: 2,
       migrate: (persisted: any, version) => {
         // v0 stores had no worldClocks — seed the defaults.
         if (version < 1 && persisted && !persisted.worldClocks) {
           persisted.worldClocks = DEFAULT_WORLD_CLOCKS;
+        }
+        // v2: switch everyone's default theme to dark, one time.
+        if (version < 2 && persisted) {
+          persisted.theme = "dark";
         }
         return persisted as SettingsState;
       },
