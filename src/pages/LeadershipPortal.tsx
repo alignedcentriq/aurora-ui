@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 
 interface ReadinessRow {
   function: string;
@@ -346,6 +347,18 @@ export function LeadershipPortal() {
                 <Panel title="Capability Heat Map" icon={Grid3x3} accent="indigo">
                   {hm && hm.matrix.length > 0 ? (
                     <>
+                      <div className="flex justify-end mb-2">
+                        <ExportCsvButton
+                          rows={hm.matrix.map((row) => {
+                            const out: Record<string, unknown> = { Skill: row.skill };
+                            row.cells.forEach((c) => {
+                              out[c.function] = c.count;
+                            });
+                            return out;
+                          })}
+                          filename="leadership-capability-heatmap.csv"
+                        />
+                      </div>
                       <div className="overflow-auto max-h-80 rounded-xl border border-slate-200/50 dark:border-zinc-800/50">
                         <Table paginate itemsPerPage={10} className="w-full border-collapse text-[11px]">
                           <TableHeader className="sticky top-0 z-10">

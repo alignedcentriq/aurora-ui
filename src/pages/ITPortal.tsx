@@ -40,6 +40,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import { flyBanner } from "@/lib/fly-banner";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -191,6 +192,21 @@ function TicketsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
         onRefresh={fetch_}
         variant="tabs"
       />
+      <div className="flex justify-end mb-2">
+        <ExportCsvButton
+          rows={items.map((t) => ({
+            "Ticket ID": t.ticket_id,
+            Employee: t.employee_name,
+            Email: t.employee_email,
+            Category: t.category,
+            Subject: t.subject,
+            Priority: t.priority,
+            Status: t.status,
+            "Raised On": t.created_at.slice(0, 10),
+          }))}
+          filename="it-support-tickets.csv"
+        />
+      </div>
       {loading ? (
         <TableLoader />
       ) : items.length === 0 ? (
@@ -328,6 +344,21 @@ function SoftwareTab({ authHeaders }: { authHeaders: Record<string, string> }) {
         onRefresh={fetch_}
         variant="tabs"
       />
+      <div className="flex justify-end mb-2">
+        <ExportCsvButton
+          rows={items.map((sr) => ({
+            Employee: sr.employee_name,
+            Email: sr.employee_email,
+            Software: sr.software_name,
+            Version: sr.version ?? "",
+            Justification: sr.justification,
+            "Admin Required": sr.requires_admin ? "Yes" : "No",
+            Status: sr.status,
+            "Approved By": sr.approved_by ?? "",
+          }))}
+          filename="it-software-requests.csv"
+        />
+      </div>
       {loading ? (
         <TableLoader />
       ) : items.length === 0 ? (

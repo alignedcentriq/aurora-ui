@@ -19,6 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import { TableLoader } from "@/components/ui/TableLoader";
 import { TableEmpty } from "@/components/ui/TableEmpty";
 import {
@@ -483,15 +484,31 @@ function RequestsTab({ authHeaders }: { authHeaders: Record<string, string> }) {
             </Button>
           ))}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={fetchAll}
-          className="flex items-center gap-2 text-muted-foreground"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <ExportCsvButton
+            rows={filtered.map((item) => ({
+              Type: TYPE_LABEL[item.type],
+              Reference: item.reference_id,
+              From: item.from_name,
+              Email: item.from_email,
+              Subject: item.subject,
+              Description: item.description,
+              Priority: item.priority ?? "",
+              Status: item.status,
+              Date: item.created_at ? item.created_at.slice(0, 10) : "",
+            }))}
+            filename="hr-requests.csv"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={fetchAll}
+            className="flex items-center gap-2 text-muted-foreground"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Table */}
@@ -707,6 +724,18 @@ function AttendanceTab({ authHeaders }: { authHeaders: Record<string, string> })
         </Button>
         {data?.is_weekend && <Badge variant="secondary">Weekend</Badge>}
         <div className="flex-1" />
+        <ExportCsvButton
+          rows={filtered.map((m) => ({
+            Employee: m.employee,
+            Email: m.email,
+            Department: m.department,
+            Designation: m.designation,
+            "Reports To": m.reports_to,
+            Status: m.status,
+            "Leave Type": m.leave_type ?? "",
+          }))}
+          filename="hr-company-attendance.csv"
+        />
         <Button variant="ghost" size="sm" onClick={fetchSnapshot} className="text-muted-foreground">
           <RefreshCw data-icon="inline-start" />
           Refresh
@@ -917,6 +946,11 @@ function LeaveRecordsTab({ authHeaders }: { authHeaders: Record<string, string> 
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [deptFilter, setDeptFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const fetchRecords = useCallback(async () => {
     setLoading(true);
@@ -935,11 +969,69 @@ function LeaveRecordsTab({ authHeaders }: { authHeaders: Record<string, string> 
     fetchRecords();
   }, [fetchRecords]);
 
+  const departments = useMemo(() => {
+    const set = new Set<string>();
+    records.forEach((r) => r.department && set.add(r.department));
+    return Array.from(set).sort();
+  }, [records]);
+
+  const leaveTypes = useMemo(() => {
+    const set = new Set<string>();
+    records.forEach((r) => r.history.forEach((h) => h.type && set.add(h.type)));
+    return Array.from(set).sort();
+  }, [records]);
+
+  const statuses = useMemo(() => {
+    const set = new Set<string>();
+    records.forEach((r) => r.history.forEach((h) => h.status && set.add(h.status)));
+    return Array.from(set).sort();
+  }, [records]);
+
+  const hasHistoryFilter = typeFilter !== "all" || statusFilter !== "all" || !!dateFrom || !!dateTo;
+
+  const matchesHistoryFilters = useCallback(
+    (h: LeaveHistoryEntry) => {
+      if (typeFilter !== "all" && h.type !== typeFilter) return false;
+      if (statusFilter !== "all" && h.status !== statusFilter) return false;
+      if (dateFrom && h.to < dateFrom) return false;
+      if (dateTo && h.from > dateTo) return false;
+      return true;
+    },
+    [typeFilter, statusFilter, dateFrom, dateTo],
+  );
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return records;
-    const q = search.trim().toLowerCase();
-    return records.filter((r) => r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q));
-  }, [records, search]);
+    let rows = records;
+    if (deptFilter !== "all") {
+      rows = rows.filter((r) => r.department === deptFilter);
+    }
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      rows = rows.filter((r) => r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q));
+    }
+    if (hasHistoryFilter) {
+      rows = rows
+        .map((r) => ({ ...r, history: r.history.filter(matchesHistoryFilters) }))
+        .filter((r) => r.history.length > 0);
+    }
+    return rows;
+  }, [records, deptFilter, search, hasHistoryFilter, matchesHistoryFilters]);
+
+  const activeFilterCount = [
+    deptFilter !== "all",
+    typeFilter !== "all",
+    statusFilter !== "all",
+    !!dateFrom,
+    !!dateTo,
+  ].filter(Boolean).length;
+
+  const clearFilters = () => {
+    setDeptFilter("all");
+    setTypeFilter("all");
+    setStatusFilter("all");
+    setDateFrom("");
+    setDateTo("");
+  };
 
   const stats = useMemo(() => {
     const weekOut = new Date();
@@ -978,17 +1070,98 @@ function LeaveRecordsTab({ authHeaders }: { authHeaders: Record<string, string> 
         ))}
       </div>
 
-      <div className="flex items-center gap-3 px-4 pb-3 sm:px-8 shrink-0">
+      <div className="flex flex-wrap items-center gap-2 px-4 pb-3 sm:px-8 shrink-0">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search name or email…"
-            className="h-8 w-[220px] pl-8 text-[12px]"
+            className="h-8 w-[200px] pl-8 text-[12px]"
           />
         </div>
+        <Select value={deptFilter} onValueChange={setDeptFilter}>
+          <SelectTrigger className="h-8 w-[150px] text-[12px]">
+            <SelectValue placeholder="Department" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">All Departments</SelectItem>
+              {departments.map((d) => (
+                <SelectItem key={d} value={d}>
+                  {d}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Select value={typeFilter} onValueChange={setTypeFilter}>
+          <SelectTrigger className="h-8 w-[150px] text-[12px]">
+            <SelectValue placeholder="Leave Type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">All Leave Types</SelectItem>
+              {leaveTypes.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {t}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="h-8 w-[140px] text-[12px]">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">All Statuses</SelectItem>
+              {statuses.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <div className="flex items-center gap-1.5">
+          <Input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="h-8 w-[140px] text-[12px]"
+            aria-label="From date"
+          />
+          <span className="text-[12px] text-muted-foreground">to</span>
+          <Input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="h-8 w-[140px] text-[12px]"
+            aria-label="To date"
+          />
+        </div>
+        {activeFilterCount > 0 && (
+          <Button variant="ghost" size="sm" onClick={clearFilters} className="h-8 text-muted-foreground">
+            <X data-icon="inline-start" />
+            Clear filters ({activeFilterCount})
+          </Button>
+        )}
         <div className="flex-1" />
+        <ExportCsvButton
+          rows={filtered.map((r) => ({
+            Employee: r.name,
+            Email: r.email,
+            Department: r.department ?? "",
+            "Upcoming Leave": r.upcoming
+              .map((u) => `${u.type} ${u.from}${u.to !== u.from ? `→${u.to}` : ""}`)
+              .join("; "),
+            "Leave Taken": r.history.length,
+            "Last Request": r.history[0] ? `${r.history[0].from} · ${r.history[0].status}` : "",
+          }))}
+          filename="hr-leave-records.csv"
+        />
         <Button variant="ghost" size="sm" onClick={fetchRecords} className="text-muted-foreground">
           <RefreshCw data-icon="inline-start" />
           Refresh

@@ -64,6 +64,7 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChartCanvas, type ChartSpec } from "@/components/analytics/ChartCanvas";
 
@@ -813,6 +814,18 @@ export default function ConnectorStudio() {
                         )}
                       </div>
                     )}
+                  <div className="flex justify-end mb-2">
+                    <ExportCsvButton
+                      rows={usage.map((u) => ({
+                        Operation: u.name,
+                        Calls: u.calls,
+                        "Avg Latency (ms)": u.avg_latency_ms,
+                        "Success Rate": `${(u.success_rate * 100).toFixed(1)}%`,
+                        "Time Saved (min)": u.total_minutes_saved.toFixed(0),
+                      }))}
+                      filename="connector-operation-usage.csv"
+                    />
+                  </div>
                   <div className="overflow-x-auto">
                     <Table paginate itemsPerPage={10} className="w-full text-sm">
                       <TableHeader>
@@ -1346,6 +1359,20 @@ function AnalyticsOverviewDialog({ open, onClose }: { open: boolean; onClose: ()
               </Card>
             </div>
 
+            <div className="flex justify-end mb-2">
+              <ExportCsvButton
+                rows={rows.map((r) => ({
+                  Connector: r.name,
+                  Status: titleCase(r.status),
+                  Calls: r.calls,
+                  "Calls (7d)": r.calls_last_7d,
+                  "Avg Latency (ms)": r.avg_latency_ms,
+                  "Success Rate": r.success_rate === null ? "" : `${(r.success_rate * 100).toFixed(1)}%`,
+                  "Time Saved (min)": r.total_minutes_saved.toFixed(0),
+                }))}
+                filename="connector-analytics-overview.csv"
+              />
+            </div>
             <div className="overflow-x-auto">
               <Table className="w-full text-sm">
                 <TableHeader>

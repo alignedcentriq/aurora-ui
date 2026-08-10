@@ -23,6 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import { TableLoader } from "@/components/ui/TableLoader";
 import { TableEmpty } from "@/components/ui/TableEmpty";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -571,6 +572,20 @@ function OnboardingTab({ authHeaders }: { authHeaders: Record<string, string> })
           />
         </div>
         <div className="flex gap-2 shrink-0">
+          <ExportCsvButton
+            rows={rows.map((r) => ({
+              Employee: r.name,
+              Email: r.email,
+              Department: r.department ?? "",
+              Designation: r.designation ?? "",
+              Added: shortDate(r.added_at),
+              "Welcome Email": WELCOME_LABEL[r.welcome.status],
+              "Manager Call": MC_LABEL[r.manager_call.status],
+              Documents: `${r.documents.submitted}/${r.documents.required}`,
+              Journey: JOURNEY_LABEL[r.journey.status],
+            }))}
+            filename="onboarding-kickoff.csv"
+          />
           <Button
             variant="ghost"
             size="sm"
@@ -876,15 +891,28 @@ function WelcomeLogsTab({ authHeaders }: { authHeaders: Record<string, string> }
           Employee tab). Use Resend here if a send failed, or switch to review mode under
           Welcome Resources to approve each one manually first.
         </p>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={fetchLogs}
-          className="flex items-center gap-2 text-muted-foreground"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          <ExportCsvButton
+            rows={logs.map((l) => ({
+              Employee: l.employee_name,
+              Email: l.employee_email,
+              "Detected On": l.created_at.slice(0, 10),
+              Status: l.status,
+              "Resources Sent": l.resources_sent?.map((r) => r.name).join("; ") ?? "",
+              Acted: l.acted_at ? l.acted_at.slice(0, 10) : "",
+            }))}
+            filename="onboarding-welcome-logs.csv"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={fetchLogs}
+            className="flex items-center gap-2 text-muted-foreground"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto px-8 pb-8">

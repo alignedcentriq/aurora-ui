@@ -42,6 +42,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 
 interface PromptRow {
   domain: string;
@@ -800,6 +801,25 @@ export function ConfigPage() {
                   const allKeys = ["guardrail", ...fetchedKeys.filter((k) => k !== "guardrail")];
                   return (
                     <div className="rounded-2xl border border-[var(--border)] bg-card overflow-hidden">
+                      <div className="flex justify-end p-2 pb-0">
+                        <ExportCsvButton
+                          rows={allKeys.map((key) => {
+                            const compositeKey = `${activeDomain}::${key}`;
+                            const row = prompts[compositeKey];
+                            const currentEdit = edits[compositeKey] ?? "";
+                            const isDirty = row ? currentEdit !== row.value : currentEdit.trim() !== "";
+                            return {
+                              Key: promptLabel(key),
+                              "Key Slug": key,
+                              Prompt: currentEdit.trim(),
+                              Version: row ? row.version : "",
+                              Updated: row ? new Date(row.updated_at).toLocaleDateString() : "",
+                              Status: isDirty ? "Unsaved" : row ? "Saved" : "Empty",
+                            };
+                          })}
+                          filename={`prompts-${activeDomain}.csv`}
+                        />
+                      </div>
                       <Table paginate itemsPerPage={10} className="w-full text-[13px]">
                         <TableHeader>
                           <TableRow className="border-b border-[var(--border)] bg-muted/30">

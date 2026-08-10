@@ -38,6 +38,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 
 interface AuditEntry {
   id: number;
@@ -348,8 +349,20 @@ export function AuditTrail() {
       </Card>
 
       <Card className="flex-1">
-        <CardHeader className="pb-2">
+        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-4">
           <CardTitle className="text-sm">Events</CardTitle>
+          <ExportCsvButton
+            rows={entries.map((e) => ({
+              When: formatDate(e.created_at),
+              Actor: e.actor_name || e.actor_email,
+              "Actor Email": e.actor_email,
+              Category: CATEGORY_LABEL[e.category] || e.category,
+              Summary: e.summary,
+              Target: e.target_name || e.target_id || "",
+              Severity: e.severity,
+            }))}
+            filename="audit-trail-events.csv"
+          />
         </CardHeader>
         <CardContent>
           {loading ? (

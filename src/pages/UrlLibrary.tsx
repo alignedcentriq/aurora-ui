@@ -35,6 +35,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TableLoader } from "@/components/ui/TableLoader";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import {
   Table,
   TableBody,
@@ -630,6 +631,17 @@ export function UrlLibrary() {
                   </button>
                 ))}
               </div>
+              <ExportCsvButton
+                rows={filteredApps.map((app) => ({
+                  Name: app.name,
+                  URL: app.url,
+                  Purpose: app.purpose ?? "",
+                  "What it can do": app.capabilities ?? "",
+                  "Chat triggers": app.trigger_keywords ?? "",
+                  Status: app.is_active ? "Active" : "Inactive",
+                }))}
+                filename="url-library.csv"
+              />
             </div>
 
             {/* ── Table ── */}

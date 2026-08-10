@@ -45,6 +45,7 @@ import { AdoptionTab } from "./AdoptionTab";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
@@ -1135,7 +1136,20 @@ function ChartsTab() {
 
       {/* Node Performance Table */}
       <div className="rounded-2xl border border-[var(--border)] bg-card p-6">
-        <h3 className="text-[15px] font-semibold text-foreground mb-4">Node Performance</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-[15px] font-semibold text-foreground">Node Performance</h3>
+          <ExportCsvButton
+            rows={nodeData.map((n: any) => ({
+              Node: n.node,
+              Calls: n.calls,
+              "Avg Latency": `${(n.avg_ms / 1000).toFixed(1)}s`,
+              "P95 Latency": `${(n.p95_ms / 1000).toFixed(1)}s`,
+              "Avg Tokens": n.avg_tokens,
+              Errors: n.errors,
+            }))}
+            filename="observability-node-performance.csv"
+          />
+        </div>
         {loading ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />

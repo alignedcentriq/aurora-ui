@@ -61,6 +61,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 
 const FIELD_TYPES = [
   "text",
@@ -795,6 +796,17 @@ export function FormLibrary() {
                       </button>
                     ))}
                   </div>
+                  <ExportCsvButton
+                    rows={filteredForms.map((f) => ({
+                      Form: f.name,
+                      Description: f.description ?? "",
+                      Fields: (f.fields || []).length,
+                      Category: f.category || "",
+                      Status: f.enabled ? "Enabled" : "Disabled",
+                      Anonymous: f.is_anonymous ? "Yes" : "No",
+                    }))}
+                    filename="form-library.csv"
+                  />
                 </div>
 
                 <Card className="shadow-sm overflow-hidden border-border">
@@ -1079,6 +1091,18 @@ export function FormLibrary() {
                       </button>
                     ))}
                   </div>
+                  <ExportCsvButton
+                    rows={filteredSubmissions.map((s) => ({
+                      Reference: s.reference_id,
+                      Form: s.form_name,
+                      "Submitted By": s.is_anonymous ? "Anonymous" : (s.employee_email || ""),
+                      When: s.submitted_at
+                        ? new Date(s.submitted_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })
+                        : "",
+                      Status: s.status,
+                    }))}
+                    filename="form-submissions.csv"
+                  />
                 </div>
 
                 <Card className="shadow-sm overflow-hidden border-border">

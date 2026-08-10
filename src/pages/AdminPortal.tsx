@@ -72,6 +72,7 @@ import { FilterBar } from "@/components/ui/FilterBar";
 import { TableLoader } from "@/components/ui/TableLoader";
 import { TableEmpty } from "@/components/ui/TableEmpty";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { ExportCsvButton } from "@/components/ui/ExportCsvButton";
 
 const PRIORITY_BADGE: Record<string, string> = {
   Low: "text-zinc-400",
@@ -259,12 +260,27 @@ function ReimbursementsTab({
 
   return (
     <div>
-      <FilterBar
-        filter={filter}
-        setFilter={setFilter}
-        options={["Pending", "Approved", "Rejected", "All"]}
-        onRefresh={fetch_}
-      />
+      <div className="flex items-center justify-between gap-4 mb-3">
+        <FilterBar
+          filter={filter}
+          setFilter={setFilter}
+          options={["Pending", "Approved", "Rejected", "All"]}
+          onRefresh={fetch_}
+          className="mb-0 flex-1"
+        />
+        <ExportCsvButton
+          rows={items.map((r) => ({
+            Employee: r.employee_name,
+            Email: r.employee_email,
+            Type: r.type,
+            Amount: r.amount,
+            Reason: r.reason,
+            Status: r.status,
+            Submitted: r.created_at.slice(0, 10),
+          }))}
+          filename="reimbursements.csv"
+        />
+      </div>
       {loading ? (
         <TableLoader />
       ) : items.length === 0 ? (
@@ -434,12 +450,29 @@ function ParkingTab({
 
   return (
     <div>
-      <FilterBar
-        filter={filter}
-        setFilter={setFilter}
-        options={["Pending", "Active", "Surrendered", "All"]}
-        onRefresh={fetch_}
-      />
+      <div className="flex items-center justify-between gap-4 mb-3">
+        <FilterBar
+          filter={filter}
+          setFilter={setFilter}
+          options={["Pending", "Active", "Surrendered", "All"]}
+          onRefresh={fetch_}
+          className="mb-0 flex-1"
+        />
+        <ExportCsvButton
+          rows={items.map((s) => ({
+            Employee: s.employee_name,
+            Email: s.employee_email,
+            Vehicle: s.vehicle_number,
+            Make: s.vehicle_make ?? "",
+            Model: s.vehicle_model ?? "",
+            Type: s.vehicle_type,
+            "Sticker #": s.sticker_number ?? "",
+            "Valid Until": s.valid_until ?? "",
+            Status: s.status,
+          }))}
+          filename="parking-stickers.csv"
+        />
+      </div>
       {loading ? (
         <TableLoader />
       ) : items.length === 0 ? (
@@ -613,12 +646,30 @@ function ComplaintsTab({
 
   return (
     <div>
-      <FilterBar
-        filter={filter}
-        setFilter={setFilter}
-        options={["Open", "In Progress", "Closed", "All"]}
-        onRefresh={fetch_}
-      />
+      <div className="flex items-center justify-between gap-4 mb-3">
+        <FilterBar
+          filter={filter}
+          setFilter={setFilter}
+          options={["Open", "In Progress", "Closed", "All"]}
+          onRefresh={fetch_}
+          className="mb-0 flex-1"
+        />
+        <ExportCsvButton
+          rows={items.map((c) => ({
+            Ticket: c.ticket_id,
+            Employee: c.employee_name,
+            Email: c.employee_email,
+            Category: c.category,
+            Description: c.description,
+            Location: c.location,
+            Priority: c.priority,
+            Status: c.status,
+            Reported: c.created_at.slice(0, 10),
+            "Closure Comment": c.closure_comment ?? "",
+          }))}
+          filename="facility-complaints.csv"
+        />
+      </div>
       {loading ? (
         <TableLoader />
       ) : items.length === 0 ? (
@@ -854,12 +905,29 @@ function FoodComplaintsTab({
 
   return (
     <div>
-      <FilterBar
-        filter={filter}
-        setFilter={setFilter}
-        options={["Open", "In Progress", "Closed", "All"]}
-        onRefresh={fetch_}
-      />
+      <div className="flex items-center justify-between gap-4 mb-3">
+        <FilterBar
+          filter={filter}
+          setFilter={setFilter}
+          options={["Open", "In Progress", "Closed", "All"]}
+          onRefresh={fetch_}
+          className="mb-0 flex-1"
+        />
+        <ExportCsvButton
+          rows={items.map((c) => ({
+            Ticket: c.ticket_id,
+            Employee: c.employee_name,
+            Email: c.employee_email,
+            Vendor: c.vendor_name,
+            Type: c.complaint_type,
+            Description: c.description,
+            Status: c.status,
+            Submitted: c.submitted_at.slice(0, 10),
+            "Closure Comment": c.closure_comment ?? "",
+          }))}
+          filename="food-complaints.csv"
+        />
+      </div>
       {loading ? (
         <TableLoader />
       ) : items.length === 0 ? (
@@ -1538,12 +1606,29 @@ function BookshelfTab({
       {/* ── Extensions ── */}
       {view === "extensions" && (
         <>
-          <FilterBar
-            filter={extFilter}
-            setFilter={setExtFilter}
-            options={["Pending", "Approved", "Rejected", "All"]}
-            onRefresh={fetchExtensions}
-          />
+          <div className="flex items-center justify-between gap-4 mb-3">
+            <FilterBar
+              filter={extFilter}
+              setFilter={setExtFilter}
+              options={["Pending", "Approved", "Rejected", "All"]}
+              onRefresh={fetchExtensions}
+              className="mb-0 flex-1"
+            />
+            <ExportCsvButton
+              rows={extensions.map((e) => ({
+                Ticket: e.ticket_id,
+                Employee: e.employee_name,
+                Email: e.employee_email,
+                Book: e.book_title,
+                "+Days": e.additional_days,
+                Reason: e.reason ?? "",
+                "Current Due": e.current_due_date ?? "",
+                "New Due": e.new_due_date ?? "",
+                Status: e.status,
+              }))}
+              filename="bookshelf-extensions.csv"
+            />
+          </div>
           {loadingExt ? (
             <TableLoader />
           ) : extensions.length === 0 ? (
@@ -1648,6 +1733,21 @@ function BookshelfTab({
           <TableEmpty label="active assignments" />
         ) : (
           <div className="overflow-x-auto rounded-lg">
+            <div className="flex justify-end mb-2">
+              <ExportCsvButton
+                rows={(dashboard.assignment_list || []).map((a) => ({
+                  Book: a.book_title,
+                  Employee: a.employee_name,
+                  Email: a.employee_email,
+                  Ticket: a.ticket_id,
+                  Copy: a.copy_number,
+                  "Issue Date": a.issued_at ? a.issued_at.slice(0, 10) : "",
+                  "Due Date": a.due_date,
+                  Status: a.status,
+                }))}
+                filename="bookshelf-assignments.csv"
+              />
+            </div>
             <Table paginate itemsPerPage={10} className="w-full min-w-[900px] text-[13px]">
               <TableHeader>
                 <TableRow className="border-b border-[var(--border)]">
@@ -1702,12 +1802,28 @@ function BookshelfTab({
       {/* ── Borrow Requests ── */}
       {view === "requests" && (
         <>
-          <FilterBar
-            filter={reqFilter}
-            setFilter={setReqFilter}
-            options={["Pending", "Approved", "Rejected", "Returned", "All"]}
-            onRefresh={fetchRequests}
-          />
+          <div className="flex items-center justify-between gap-4 mb-3">
+            <FilterBar
+              filter={reqFilter}
+              setFilter={setReqFilter}
+              options={["Pending", "Approved", "Rejected", "Returned", "All"]}
+              onRefresh={fetchRequests}
+              className="mb-0 flex-1"
+            />
+            <ExportCsvButton
+              rows={requests.map((r) => ({
+                Ticket: r.ticket_id,
+                Employee: r.employee_name,
+                Email: r.employee_email,
+                Book: r.book_title,
+                Notes: r.notes ?? "",
+                Status: r.status,
+                "Due Date": r.due_date ?? "",
+                Requested: r.requested_at.slice(0, 10),
+              }))}
+              filename="bookshelf-borrow-requests.csv"
+            />
+          </div>
           {loadingReq ? (
             <TableLoader />
           ) : requests.length === 0 ? (
@@ -2162,12 +2278,25 @@ function DeskKeysTab({
         </div>
 
         <TabsContent value="requests" className="m-0">
-          <FilterBar
-            filter={filter}
-            setFilter={setFilter}
-            options={["Pending", "Approved", "Rejected", "Auto-Rejected", "Released", "All"]}
-            onRefresh={fetch_}
-          />
+          <div className="flex items-center justify-between gap-4 mb-3">
+            <FilterBar
+              filter={filter}
+              setFilter={setFilter}
+              options={["Pending", "Approved", "Rejected", "Auto-Rejected", "Released", "All"]}
+              onRefresh={fetch_}
+              className="mb-0 flex-1"
+            />
+            <ExportCsvButton
+              rows={items.map((d) => ({
+                Employee: d.employee_name,
+                Email: d.employee_email,
+                Desk: d.desk_number,
+                Reason: d.reason || d.decision_reason || "",
+                Status: d.status,
+              }))}
+              filename="desk-key-requests.csv"
+            />
+          </div>
           {loading ? (
             <TableLoader />
           ) : items.length === 0 ? (
@@ -2658,6 +2787,17 @@ function ParkingDuesTab({
                     {h.payments.length === 0 ? (
                       <p className="text-[12px] text-muted-foreground">No charges accrued yet.</p>
                     ) : (
+                      <>
+                      <div className="flex justify-end mb-2">
+                        <ExportCsvButton
+                          rows={h.payments.map((p) => ({
+                            Month: p.month,
+                            "Amount Due": p.amount_due,
+                            Status: p.status,
+                          }))}
+                          filename={`parking-dues-${h.employee_email}.csv`}
+                        />
+                      </div>
                       <Table paginate itemsPerPage={10} className="w-full text-[12px]">
                         <TableHeader>
                           <TableRow className="text-left text-[11px] font-bold uppercase tracking-wider text-[#94a3b8] dark:text-white/40">
@@ -2708,6 +2848,7 @@ function ParkingDuesTab({
                           ))}
                         </TableBody>
                       </Table>
+                      </>
                     )}
                   </div>
                 )}
@@ -2980,7 +3121,23 @@ function TravelRequestsSubTab({
 
   return (
     <div>
-      <FilterBar filter={filter} setFilter={setFilter} options={filterOptions} onRefresh={fetch_} />
+      <div className="flex items-center justify-between gap-4 mb-3">
+        <FilterBar filter={filter} setFilter={setFilter} options={filterOptions} onRefresh={fetch_} className="mb-0 flex-1" />
+        <ExportCsvButton
+          rows={items.map((item) => ({
+            Ref: item.ref_id,
+            Employee: item.employee_name,
+            Email: item.employee_email,
+            Route: `${item.from_location} -> ${item.to_destination}`,
+            Date: item.travel_date,
+            "Return Date": item.return_date ?? "",
+            Mode: item.mode_of_travel ?? "",
+            "Est. Cost": item.estimated_cost ?? "",
+            Status: TRAVEL_STATUS_LABEL[item.status] || item.status,
+          }))}
+          filename="travel-requests.csv"
+        />
+      </div>
       {loading ? (
         <TableLoader />
       ) : items.length === 0 ? (
@@ -3349,12 +3506,29 @@ function TravelExpensesSubTab({
 
   return (
     <div>
-      <FilterBar
-        filter={filter}
-        setFilter={setFilter}
-        options={["All", "Pending", "Approved", "Rejected"]}
-        onRefresh={fetch_}
-      />
+      <div className="flex items-center justify-between gap-4 mb-3">
+        <FilterBar
+          filter={filter}
+          setFilter={setFilter}
+          options={["All", "Pending", "Approved", "Rejected"]}
+          onRefresh={fetch_}
+          className="mb-0 flex-1"
+        />
+        <ExportCsvButton
+          rows={items.map((item) => ({
+            "Expense Ref": item.ref_id,
+            "Travel Ref": item.travel_ref,
+            Employee: item.employee_name,
+            Email: item.employee_email,
+            Route: `${item.from_location} -> ${item.to_destination}`,
+            Amount: `${item.currency || "INR"} ${item.amount}`,
+            "Expense Limit": item.expense_limit ? `${item.expense_limit_currency || "INR"} ${item.expense_limit}` : "",
+            Breakdown: item.breakdown ?? "",
+            Status: item.status,
+          }))}
+          filename="travel-expense-claims.csv"
+        />
+      </div>
       {loading ? (
         <TableLoader />
       ) : items.length === 0 ? (
